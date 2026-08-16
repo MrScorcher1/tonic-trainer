@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,13 +36,19 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 def main() -> int:
     print("=== GATE 7 — publication bundle ===")
 
-    dry = subprocess.run([PY, "-m", "tonic_trainer.hf_bundle"], cwd=ROOT,
-                         capture_output=True, text=True)
-    check("dry run exits zero", dry.returncode == 0, dry.stderr.strip()[-300:])
-    check("dry run prints a per-file licence column", "licence" in dry.stdout, "")
-    check("dry run says it wrote nothing", "DRY RUN" in dry.stdout)
-    check("dry run wrote nothing", not BUNDLE.exists() or not any(BUNDLE.rglob("*.mp3")),
-          "bundle already materialised (re-run after removing build/hf_upload to retest)")
+    # The dry run is exercised against a throwaway directory, so "wrote nothing"
+    # is a real assertion rather than a statement about whether the bundle
+    # happened to exist already.
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "bundle"
+        env = {**os.environ, "TT_BUNDLE_DIR": str(probe)}
+        dry = subprocess.run([PY, "-m", "tonic_trainer.hf_bundle"], cwd=ROOT,
+                             capture_output=True, text=True, env=env)
+        check("dry run exits zero", dry.returncode == 0, dry.stderr.strip()[-300:])
+        check("dry run prints a per-file licence column", "licence" in dry.stdout)
+        check("dry run says it wrote nothing", "DRY RUN" in dry.stdout)
+        check("dry run really wrote nothing", not probe.exists(),
+              f"{probe} was created by a dry run")
 
     real = subprocess.run([PY, "-m", "tonic_trainer.hf_bundle", "--confirm"], cwd=ROOT,
                           capture_output=True, text=True)

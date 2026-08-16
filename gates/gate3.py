@@ -53,6 +53,14 @@ def main() -> int:
     if acq.get("fallback_used"):
         check("fallback recorded its range probe", bool(acq.get("range_probe")), str(acq.get("range_probe")))
 
+    if acq.get("sources_deleted"):
+        # Not an excuse and not a pass: the checks below will fail, and this
+        # line exists only so the reason is obvious rather than mysterious.
+        print(f"NOTE: the source tracks were deleted on {acq['sources_deleted']} "
+              f"({acq.get('sources_deleted_reason', 'no reason recorded')}).")
+        print("      This gate verifies files on disk, so it now requires re-downloading")
+        print("      the 39.3 GB package. Its original PASS is recorded in acquisition.json.")
+
     obtained = int(acq.get("annotated_tracks_obtained", 0))
     check(f"annotated tracks obtained >= {MIN_OBTAINED}", obtained >= MIN_OBTAINED, str(obtained))
 
@@ -62,6 +70,9 @@ def main() -> int:
 
     rng = random.Random(1729)
     sample_ids = rng.sample(sorted(on_disk), min(SAMPLE, len(on_disk)))
+    # An empty sample would make every per-file check below pass vacuously.
+    check(f"there are at least {SAMPLE} source tracks to sample",
+          len(sample_ids) == SAMPLE, f"{len(sample_ids)} available")
     bad_path = []
     for tid in sample_ids:
         p = AUDIO_ROOT / f"{tid // 1000:03d}" / f"{tid:06d}.mp3"
@@ -74,6 +85,8 @@ def main() -> int:
     check("derived clips exist", len(clips) > 0, f"{len(clips)} clips")
 
     clip_ids = rng.sample(sorted(clips), min(SAMPLE, len(clips)))
+    check(f"there are at least {SAMPLE} clips to sample",
+          len(clip_ids) == SAMPLE, f"{len(clip_ids)} available")
     bad_duration, unreadable = [], []
     for tid in clip_ids:
         try:

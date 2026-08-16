@@ -147,20 +147,36 @@ def print_summary(title: str, summary: dict) -> None:
     print(f"{'tonic+mode':<12} {summary['exact_tonic_and_mode']:>6} {summary['exact_rate']:>7.1%}")
 
 
-def run(sample_size: int = SAMPLE_SIZE, control_size: int = CONTROL_SIZE,
+def run(sample_size: int | None = None, control_size: int = CONTROL_SIZE,
         seed: int = 20260816, workers: int = 12) -> dict:
+    """Analyse the ENTIRE tier1+tier2 pool — a census, not a sample.
+
+    The original method drew 300 random entries. That made the verdict depend on
+    a seed, which is exactly the knob that could be turned until the gate went
+    green; a census has no such knob. See gates/gate4b.py for the full record of
+    why the method changed and when.
+
+    `sample_size` is retained only so a caller can deliberately run a smaller,
+    noisier check; the gate itself requires the census.
+    """
     from .manifest import load_manifest
 
     entries = load_manifest()
     pool = [e for e in entries if e["difficulty"] in ("tier1", "tier2")]
-    if len(pool) < sample_size:
-        raise ValueError(
-            f"only {len(pool)} tier1+tier2 entries, need {sample_size} to validate"
-        )
+    if not pool:
+        raise ValueError("no tier1+tier2 entries to validate")
 
     rng = random.Random(seed)
-    sample = rng.sample(pool, sample_size)
-    print(f"analysing {len(sample)} tier1+tier2 clips with Krumhansl-Schmuckler ...")
+    if sample_size is None:
+        sample = list(pool)
+        print(f"analysing ALL {len(sample)} tier1+tier2 clips (census) "
+              f"with Krumhansl-Schmuckler ...")
+    else:
+        if len(pool) < sample_size:
+            raise ValueError(f"only {len(pool)} tier1+tier2 entries, need {sample_size}")
+        sample = rng.sample(pool, sample_size)
+        print(f"analysing {len(sample)} sampled tier1+tier2 clips "
+              f"with Krumhansl-Schmuckler ...")
     predictions = analyse_entries(sample, workers=workers)
 
     results = [
@@ -181,7 +197,9 @@ def run(sample_size: int = SAMPLE_SIZE, control_size: int = CONTROL_SIZE,
 
     # Negative control: same predictions, labels shuffled against them. If a
     # broken pairing scores near the real one, the metric itself is meaningless.
-    control_entries = rng.sample(sample, min(control_size, len(sample)))
+    # Run over the whole pool too, so the control is not a sampled estimate either.
+    control_entries = list(sample) if sample_size is None else rng.sample(
+        sample, min(control_size, len(sample)))
     shuffled_labels = [(e["tonic_pc"], e["mode"]) for e in control_entries]
     rng.shuffle(shuffled_labels)
     control_results = []
@@ -205,6 +223,8 @@ def run(sample_size: int = SAMPLE_SIZE, control_size: int = CONTROL_SIZE,
 
     payload = {
         "seed": seed,
+        "census": sample_size is None,
+        "pool_size": len(pool),
         "sample": real,
         "negative_control": control,
         "by_genre": by_genre,

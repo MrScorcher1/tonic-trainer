@@ -24,7 +24,9 @@ from .crosscheck import CONFLICTS_JSON, conflicted_ids
 from .manifest import load_manifest
 from .paths import BUILD
 
-BUNDLE = BUILD / "hf_upload"
+# TT_BUNDLE_DIR lets a gate exercise the dry run in isolation instead of
+# depending on the real bundle not existing yet.
+BUNDLE = Path(os.environ.get("TT_BUNDLE_DIR", str(BUILD / "hf_upload")))
 REPO_ID = "MrScorcher1/tonic-trainer"
 RESOLVE_BASE = f"https://huggingface.co/datasets/{REPO_ID}/resolve/main/clips"
 
