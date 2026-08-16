@@ -41,8 +41,47 @@ from .paths import BUILD, WEB
 from .scoring import classify, explain
 
 DISPUTED_LOG = BUILD / "disputed.jsonl"
+AUDIO_CACHE = BUILD / "audio_cache"
 CHUNK = 1 << 18
 RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+UPSTREAM_TIMEOUT = 30
+
+
+def fetch_upstream(rel_path: str, audio_base: str) -> Path:
+    """Pull one clip from the remote host into the local cache, or raise.
+
+    This is the proxy path (``TT_AUDIO_PROXY=1``). The browser never talks to
+    the remote host, so its CORS policy is irrelevant — which matters, because
+    Hugging Face's `resolve/` responses are not reliably CORS-enabled and the
+    redirect target has been reported failing preflight. Serving same-origin
+    turns that from a blocker into a latency question, and keeps Range/206
+    working for iOS because the file is on local disk by the time it is served.
+
+    The cache is bounded by the corpus (~0.5 MB x ~3.6k clips), and it is an
+    operator artifact, not user state.
+    """
+    import requests
+
+    target = (AUDIO_CACHE / rel_path).resolve()
+    try:
+        target.relative_to(AUDIO_CACHE.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not found") from None
+    if target.is_file() and target.stat().st_size > 0:
+        return target
+
+    url = f"{audio_base}/{rel_path}"
+    resp = requests.get(url, timeout=UPSTREAM_TIMEOUT)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502,
+                            detail=f"upstream {url} returned {resp.status_code}")
+    if not resp.content:
+        raise HTTPException(status_code=502, detail=f"upstream {url} returned an empty body")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".part")
+    tmp.write_bytes(resp.content)
+    tmp.replace(target)
+    return target
 
 
 class Guess(BaseModel):
@@ -155,10 +194,17 @@ def triage_dispute(entry: dict, guess_pc: int, guess_mode: str) -> dict:
 
 
 def create_app(entries: list[dict] | None = None, *, token: str | None = None,
-               audio_base: str | None = None) -> FastAPI:
+               audio_base: str | None = None, audio_proxy: bool | None = None) -> FastAPI:
     entries = entries if entries is not None else load_manifest()
     audio_base = (audio_base if audio_base is not None
                   else os.environ.get("TT_AUDIO_BASE", "")).rstrip("/")
+    if audio_proxy is None:
+        audio_proxy = os.environ.get("TT_AUDIO_PROXY", "") not in ("", "0", "false", "no")
+    if audio_proxy and not audio_base:
+        raise ValueError("TT_AUDIO_PROXY needs TT_AUDIO_BASE to know what to proxy")
+    # In proxy mode the page keeps fetching same-origin URLs; only this process
+    # talks to the remote host.
+    payload_base = "" if audio_proxy else audio_base
     by_id = {e["id"]: e for e in entries}
     by_tier: dict[str, list[dict]] = {}
     for e in entries:
@@ -172,6 +218,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
     app.state.prefix = prefix
     app.state.token = token
     app.state.audio_base = audio_base
+    app.state.audio_proxy = audio_proxy
     router = APIRouter()
 
     @router.get("/api/puzzle")
@@ -186,7 +233,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
             raise HTTPException(status_code=404, detail=f"no puzzles in tier {tier!r}")
         # secrets.choice, not random.choice: no seeded sequence to predict, and
         # nothing about the previous call is remembered.
-        return JSONResponse(_puzzle_payload(secrets.choice(pool), prefix, audio_base))
+        return JSONResponse(_puzzle_payload(secrets.choice(pool), prefix, payload_base))
 
     @router.post("/api/guess")
     def post_guess(guess: Guess) -> JSONResponse:
@@ -236,7 +283,11 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
         except ValueError:
             raise HTTPException(status_code=404, detail="not found") from None
         if not target.is_file():
-            raise HTTPException(status_code=404, detail="not found")
+            if not audio_proxy:
+                raise HTTPException(status_code=404, detail="not found")
+            # Local clips may have been deleted after publication; fetch from the
+            # remote host and serve it from here.
+            target = fetch_upstream(path, audio_base)
         return _serve_range(target, request.headers.get("range"))
 
     @router.get("/api/health")
@@ -295,6 +346,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="acknowledge that --tunnel publishes CC audio to a public URL")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default=None)
+    parser.add_argument("--audio-base", default=None,
+                        help="serve clips from a remote host (overrides TT_AUDIO_BASE)")
+    parser.add_argument("--audio-proxy", action="store_true",
+                        help="fetch remote clips server-side and serve them same-origin, "
+                             "so the remote host's CORS policy does not matter")
     args = parser.parse_args(argv)
 
     if args.tunnel and not args.confirm_public:
@@ -307,8 +363,12 @@ def main(argv: list[str] | None = None) -> int:
     token = secrets.token_urlsafe(16) if exposed else None
     host = args.host or ("0.0.0.0" if exposed else "127.0.0.1")  # noqa: S104 — opt-in only
 
-    app = create_app(token=token)
+    app = create_app(token=token, audio_base=args.audio_base,
+                     audio_proxy=True if args.audio_proxy else None)
     prefix = app.state.prefix
+    if app.state.audio_base:
+        mode = "proxied server-side" if app.state.audio_proxy else "fetched by the browser"
+        print(f"audio: {app.state.audio_base} ({mode})")
 
     if args.tunnel:
         print("starting cloudflared quick tunnel ...")
