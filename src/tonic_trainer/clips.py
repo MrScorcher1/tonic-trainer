@@ -2,10 +2,13 @@
 
 SPEC §1.3 assumed the FMAK package shipped 30-second clips cut from the middle
 of each track. It does not — it ships full-length audio (~210 s, ~264 kbps
-median). So the clip the spec describes is produced here rather than assumed:
-a 30-second window taken from the middle of each track, which keeps both the
-described clip semantics and the documented "no song openings" limitation
-(SPEC §3) rather than silently changing the product.
+median), so the clip is produced here rather than assumed.
+
+**Position: the opening.** The spec's "you never hear a song opening" entry in
+§3 was an accepted *limitation* of FMA's packaging, not a design choice, and
+holding full tracks makes it optional. The user chose openings (2026-08-16):
+openings are where a tonic is most clearly established, which is the whole skill
+being trained. `CLIP_POSITION` still supports "middle" if that is ever revisited.
 
 Re-encoded rather than stream-copied: an MP3 frame-boundary copy leaves encoder
 delay/padding that makes `loop = true` audibly gap. Re-encoding to a single
@@ -27,7 +30,7 @@ from .paths import BUILD
 
 CLIP_ROOT = BUILD / "clips"
 CLIP_SECONDS = 30.0
-# A track must be long enough to have a middle worth taking.
+CLIP_POSITION = "start"  # "start" (user's choice) | "middle"
 MIN_SOURCE_SECONDS = 35.0
 CLIP_BITRATE = "128k"
 CLIP_SAMPLE_RATE = "44100"
@@ -73,7 +76,7 @@ def clip_one(args: tuple[int, str, str]) -> ClipResult:
         return ClipResult(track_id, None, False,
                           f"source is only {duration:.1f}s (<{MIN_SOURCE_SECONDS}s)", duration)
 
-    start = max(0.0, (duration - CLIP_SECONDS) / 2.0)
+    start = 0.0 if CLIP_POSITION == "start" else max(0.0, (duration - CLIP_SECONDS) / 2.0)
 
     if not out.exists() or out.stat().st_size == 0:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +122,7 @@ def write_report(results: list[ClipResult]) -> dict:
     failures = [r for r in results if not r.ok]
     report = {
         "clip_seconds": CLIP_SECONDS,
-        "clip_position": "middle",
+        "clip_position": CLIP_POSITION,
         "bitrate": CLIP_BITRATE,
         "sample_rate": CLIP_SAMPLE_RATE,
         "channels": 1,

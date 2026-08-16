@@ -350,7 +350,13 @@
 
     // Bytes are fetched now; decoding waits for the AudioContext, which cannot
     // exist until the user gestures.
-    const audioResp = await fetch(`${apiBase()}${puzzle.audio_url}`);
+    // audio_url is either a path served by this process or an absolute URL on a
+    // remote host (TT_AUDIO_BASE — e.g. a Hugging Face dataset). Both are fetched
+    // the same way; only the remote one depends on that host sending CORS headers.
+    const audioUrl = /^https?:\/\//.test(puzzle.audio_url)
+      ? puzzle.audio_url
+      : `${apiBase()}${puzzle.audio_url}`;
+    const audioResp = await fetch(audioUrl);
     if (!audioResp.ok) {
       setStatus(`AUDIO FAILED (${audioResp.status})`);
       return;

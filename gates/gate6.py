@@ -69,10 +69,20 @@ def main() -> int:
         return 1
 
     env = dict(os.environ)
-    env["PLAYWRIGHT_BROWSERS_PATH"] = str(BROWSERS)
     env["npm_config_cache"] = str(ROOT / ".npm-cache")
 
-    installed = list(BROWSERS.glob("webkit-*")) if BROWSERS.exists() else []
+    # The browser may live in the project-local dir or in Playwright's shared
+    # cache, depending on where it was installed from. Prefer whichever has a
+    # WebKit build rather than forcing one and reporting a false absence.
+    shared = Path.home() / ".cache" / "ms-playwright"
+    installed: list[Path] = []
+    for candidate in (BROWSERS, shared):
+        if candidate.exists():
+            found = sorted(candidate.glob("webkit-*"))
+            if found:
+                installed = found
+                env["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+                break
     if not installed:
         check("headless WebKit is installed", False,
               "no webkit build under .playwright — `npx playwright install webkit` is "

@@ -190,3 +190,22 @@ def test_dispute_is_logged_with_triage(client, manifest, monkeypatch, tmp_path):
     record = json.loads(log.read_text().strip())
     assert record["id"] == entry["id"]
     assert record["user_tonic_pc"] == 5
+
+
+def test_audio_base_points_clips_at_a_remote_host(manifest, clip_dir, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from tonic_trainer import server
+
+    monkeypatch.setattr(server, "CLIP_ROOT", clip_dir)
+    base = "https://huggingface.co/datasets/MrScorcher1/tonic-trainer/resolve/main/clips"
+    client = TestClient(server.create_app(manifest, audio_base=base + "/"))
+    body = client.get("/api/puzzle").json()
+    assert body["audio_url"].startswith(base + "/")
+    assert body["audio_url"].endswith(".mp3")
+    # Local serving still works — the remote base only changes what the page fetches.
+    assert client.get("/audio/000/000001.mp3").status_code == 200
+
+
+def test_local_audio_is_the_default(client):
+    assert client.get("/api/puzzle").json()["audio_url"].startswith("/audio/")

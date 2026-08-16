@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
-import random
+import os
 import re
 import secrets
 import socket
@@ -51,15 +51,23 @@ class Guess(BaseModel):
     mode: str = Field(pattern="^(major|minor)$")
 
 
-def _puzzle_payload(entry: dict, prefix: str) -> dict:
+def _puzzle_payload(entry: dict, prefix: str, audio_base: str = "") -> dict:
     """The public view of a puzzle: attribution and audio, never the answer.
 
     Field names are listed explicitly rather than filtered out of the entry —
     a new answer-bearing column added upstream must not silently start shipping.
+
+    `audio_base` (from ``TT_AUDIO_BASE``) points the clip at a remote host such
+    as a Hugging Face dataset. Unset — the default — serves the clip from this
+    process, which always works; turning the remote on or off is one env var,
+    not a rebuild.
     """
     return {
         "id": entry["id"],
-        "audio_url": f"{prefix}/audio/{entry['audio_path']}",
+        "audio_url": (
+            f"{audio_base}/{entry['audio_path']}" if audio_base
+            else f"{prefix}/audio/{entry['audio_path']}"
+        ),
         "title": entry["title"],
         "artist": entry["artist"],
         "license": entry["license"],
@@ -146,8 +154,11 @@ def triage_dispute(entry: dict, guess_pc: int, guess_mode: str) -> dict:
     }
 
 
-def create_app(entries: list[dict] | None = None, *, token: str | None = None) -> FastAPI:
+def create_app(entries: list[dict] | None = None, *, token: str | None = None,
+               audio_base: str | None = None) -> FastAPI:
     entries = entries if entries is not None else load_manifest()
+    audio_base = (audio_base if audio_base is not None
+                  else os.environ.get("TT_AUDIO_BASE", "")).rstrip("/")
     by_id = {e["id"]: e for e in entries}
     by_tier: dict[str, list[dict]] = {}
     for e in entries:
@@ -160,6 +171,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None) -
     app = FastAPI(title="Tonic Trainer", docs_url=None, redoc_url=None)
     app.state.prefix = prefix
     app.state.token = token
+    app.state.audio_base = audio_base
     router = APIRouter()
 
     @router.get("/api/puzzle")
@@ -174,7 +186,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None) -
             raise HTTPException(status_code=404, detail=f"no puzzles in tier {tier!r}")
         # secrets.choice, not random.choice: no seeded sequence to predict, and
         # nothing about the previous call is remembered.
-        return JSONResponse(_puzzle_payload(secrets.choice(pool), prefix))
+        return JSONResponse(_puzzle_payload(secrets.choice(pool), prefix, audio_base))
 
     @router.post("/api/guess")
     def post_guess(guess: Guess) -> JSONResponse:
