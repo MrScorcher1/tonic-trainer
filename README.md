@@ -99,10 +99,10 @@ not start until phase N's gate passes. `gates/run_all.py` enforces the order.
 
 **Gate 4b is the one that catches the failure nothing else would**: correct
 audio, correct labels, joined on the wrong key. It passes only if agreement is
-solidly above chance *and* below suspicion, with `relative` as the largest error
-bucket — the signature of a real human-labelled set analysed by an imperfect
-algorithm. A shuffled-label control must collapse to chance, or the metric
-itself is meaningless.
+solidly above chance *and* below suspicion, with a near-key confusion
+(`relative` or `fifth`) as the largest error bucket — the signature of a real
+human-labelled set analysed by an imperfect algorithm. A shuffled-label control
+must collapse to chance, or the metric itself is meaningless.
 
 ## Data and licensing
 
