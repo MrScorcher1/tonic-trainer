@@ -535,3 +535,18 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Failure has to be visible: an unreachable CDN otherwise looks like a
+   broken puzzle rather than an external outage. */
+.error {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--bad);
+  border-left: 4px solid var(--bad);
+  border-radius: 8px;
+  background: rgba(255, 106, 90, 0.08);
+  color: #ffd7d1;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.6;
+}

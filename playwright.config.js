@@ -1,5 +1,7 @@
-// Gate 6 runs on headless WebKit at two viewports: WebKit is the closest
-// available stand-in for iOS Safari, and the spec forbids a paid device farm.
+// The suite runs against the STATIC build — the same docs/ tree GitHub Pages
+// publishes, served by the stdlib http.server so no custom code can drift from
+// the deployed artifact. WebKit is the closest available stand-in for iOS
+// Safari, and the spec forbids a paid device farm.
 const { defineConfig, devices } = require("@playwright/test");
 
 const PORT = process.env.TT_E2E_PORT || "8099";
@@ -26,9 +28,10 @@ module.exports = defineConfig({
     },
   ],
   webServer: {
-    command: `.venv/bin/python -m tonic_trainer.server --port ${PORT}`,
-    url: `http://127.0.0.1:${PORT}/api/health`,
+    command: `.venv/bin/python -m http.server ${PORT} --directory docs`,
+    url: `http://127.0.0.1:${PORT}/index.html`,
     reuseExistingServer: true,
+    stdout: "ignore",
     timeout: 60_000,
   },
 });

@@ -1,7 +1,12 @@
 /* Tonic Trainer — front panel logic.
  *
- * Three rules hold this file together, and breaking any of them ships
- * something that is silently broken on a phone:
+ * This runs as a PURE STATIC SITE: no server, no API. The manifest is a static
+ * asset, puzzle selection and scoring happen here, and audio streams from the
+ * Hugging Face CDN. The FastAPI server still exists but is demoted to a fallback
+ * (see README) for the one case we do not control: HF withdrawing CORS.
+ *
+ * Three rules hold this file together, and breaking any of them ships something
+ * that is silently broken on a phone:
  *
  * 1. ONE audio path. The clip and the drone are both Web Audio nodes on the
  *    same AudioContext. No <audio> element, ever. On iOS the element path and
@@ -13,8 +18,8 @@
  * 3. Looping is AudioBufferSourceNode.loop = true, not an `ended` handler that
  *    starts a new source. A restart handler gives an audible gap at the seam.
  *
- * State lives in this closure and nowhere else: no localStorage, no cookies,
- * no server-side session. Reload and the unit forgets you (SPEC §0.5).
+ * State lives in this closure and nowhere else: no localStorage, no cookies, no
+ * server-side session. Reload and the unit forgets you.
  */
 
 (() => {
@@ -22,7 +27,6 @@
 
   const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
   const WHITE_PCS = [0, 2, 4, 5, 7, 9, 11];
-  // Black-key offsets as a fraction of keyboard width, keyed by pitch class.
   const BLACK_LAYOUT = [
     { pc: 1, left: 10.2 },
     { pc: 3, left: 24.0 },
@@ -33,14 +37,15 @@
   const A4 = 440;
   const DRONE_ATTACK = 0.04;
   const DRONE_RELEASE = 0.08;
+  const TAGGED_TIERS = ["tier1", "tier2", "tier3"];
 
   const el = (id) => document.getElementById(id);
   const dom = {
-    unit: el("unit"),
     title: el("track-title"),
     artist: el("track-artist"),
     license: el("track-license"),
     attribution: el("attribution"),
+    error: el("error"),
     status: el("status-line"),
     tierReadout: el("tier-readout"),
     poolReadout: el("pool-readout"),
@@ -68,8 +73,10 @@
     lampDrone: el("lamp-drone"),
   };
 
-  /** All mutable state. In memory only — this object is never persisted. */
+  /** All mutable state. In memory only — never persisted. */
   const state = {
+    config: null,
+    entries: [],
     puzzle: null,
     clipBuffer: null,
     clipBytes: null,
@@ -80,10 +87,10 @@
     mode: "major",
     answered: false,
     lastGuess: null,
+    answerRequests: 0,
     stats: { attempts: 0, correct: 0, buckets: {} },
   };
 
-  /** Web Audio graph. Created lazily, inside a gesture. */
   const audio = {
     ctx: null,
     clipGain: null,
@@ -98,18 +105,12 @@
 
   /* ---------------------------------------------------------------- audio */
 
-  /**
-   * Create the single AudioContext. MUST be called synchronously from a user
-   * gesture handler — never after an await, never on load.
-   */
   function ensureContext() {
     if (audio.ctx) {
       if (audio.ctx.state === "suspended") audio.ctx.resume();
       return audio.ctx;
     }
     const Ctor = window.AudioContext || window.webkitAudioContext;
-    // Recorded for the Gate 6 invariant: was there a live user event on the
-    // stack when the context came into being?
     audio.createdDuringGesture = Boolean(window.event);
     audio.ctx = new Ctor();
     audio.clipGain = audio.ctx.createGain();
@@ -125,15 +126,13 @@
     if (!audio.ctx) return;
     const clip = Number(dom.mixClip.value) / 100;
     const drone = Number(dom.mixDrone.value) / 100;
-    audio.clipGain.gain.value = clip * clip;   // perceptual-ish taper
+    audio.clipGain.gain.value = clip * clip;
     audio.droneGain.gain.value = drone * drone * 0.5;
   }
 
   function stopClip() {
     if (audio.clipSource) {
       audio.clipSource.onended = null;
-      // Only sources we started can be stopped; a never-started source would
-      // throw InvalidStateError, so track it rather than swallowing the error.
       if (audio.clipStarted) audio.clipSource.stop();
       audio.clipSource.disconnect();
       audio.clipSource = null;
@@ -159,7 +158,7 @@
     stopClip();
     const source = audio.ctx.createBufferSource();
     source.buffer = state.clipBuffer;
-    source.loop = state.looping;      // gapless seam; no restart handler
+    source.loop = state.looping;
     source.connect(audio.clipGain);
     source.onended = handleClipEnded;
     source.start();
@@ -184,8 +183,8 @@
     const freq = pcToFreq(pc);
     const specs = [
       { f: freq, type: "sine", g: 0.6 },
-      { f: freq / 2, type: "sine", g: 0.32 },   // octave below for body
-      { f: freq * 2, type: "triangle", g: 0.08 }, // a little edge to find by ear
+      { f: freq / 2, type: "sine", g: 0.32 },
+      { f: freq * 2, type: "triangle", g: 0.08 },
     ];
     audio.droneOscillators = specs.map((spec) => {
       const osc = ctx.createOscillator();
@@ -206,9 +205,9 @@
     if (audio.droneOscillators.length && audio.ctx) {
       const now = audio.ctx.currentTime;
       audio.droneOscillators.forEach(({ osc, voice }) => {
-        // No try/catch: the ramp target and the current value are both clamped
-        // positive (exponentialRamp rejects zero), and re-stopping a stopped
-        // oscillator is legal, so none of these calls can throw.
+        // No try/catch: the ramp target and current value are clamped positive
+        // (exponentialRamp rejects zero) and re-stopping a stopped oscillator is
+        // legal, so none of these can throw.
         voice.gain.cancelScheduledValues(now);
         voice.gain.setValueAtTime(Math.max(voice.gain.value, 0.0001), now);
         voice.gain.exponentialRampToValueAtTime(0.0001, now + DRONE_RELEASE);
@@ -225,6 +224,26 @@
 
   function setStatus(text) {
     dom.status.textContent = text;
+  }
+
+  /**
+   * Surface a failure instead of looking like a broken puzzle.
+   *
+   * The realistic failures are all external and all invisible by default: HF
+   * withdrawing Access-Control-Allow-Origin, an HF outage, or the /resolve/
+   * rate limit (3000 requests per 5 minutes per IP). Each produces a fetch that
+   * simply does not return audio, so without this the unit would sit there
+   * looking broken with no cause named.
+   */
+  function showError(headline, detail) {
+    dom.error.hidden = false;
+    dom.error.textContent = `${headline} ${detail}`;
+    setStatus("AUDIO UNAVAILABLE");
+  }
+
+  function clearError() {
+    dom.error.hidden = true;
+    dom.error.textContent = "";
   }
 
   function buildPiano() {
@@ -256,9 +275,7 @@
 
   /**
    * Three distinct key states, so exploring never looks like submitting:
-   *   idle          — not selected, not sounding
-   *   auditioning   — sounding right now (this is the pitch in your ear)
-   *   committed     — armed for CHECK, not currently sounding
+   *   idle | auditioning (sounding now) | committed (armed for CHECK).
    * The armed marker is a separate attribute so both markers are observable.
    */
   function renderKeys() {
@@ -303,16 +320,56 @@
 
   /* ------------------------------------------------------------- puzzle IO */
 
-  function apiBase() {
-    // The server may serve under a random path prefix in exposed modes; the
-    // page is served from that same prefix, so derive it from our own URL.
-    const path = window.location.pathname.replace(/\/[^/]*$/, "");
-    return path === "/" ? "" : path;
+  function poolFor(tier) {
+    if (tier === "tagged") return state.entries.filter((e) => TAGGED_TIERS.includes(e.difficulty));
+    if (!tier || tier === "any") return state.entries;
+    return state.entries.filter((e) => e.difficulty === tier);
+  }
+
+  /** Unbiased pick from a cryptographic source — no seeded sequence, no memory. */
+  function pickRandom(list) {
+    if (!list.length) return null;
+    const limit = Math.floor(0xffffffff / list.length) * list.length;
+    const buf = new Uint32Array(1);
+    let value;
+    do {
+      crypto.getRandomValues(buf);
+      [value] = buf;
+    } while (value >= limit);
+    return list[value % list.length];
+  }
+
+  /**
+   * Build the clip URL.
+   *
+   * ALWAYS the `resolve/` URL, never what it redirects to. Hugging Face answers
+   * `resolve/` with a 302 to a CDN URL that is SIGNED — it carries an Expires
+   * timestamp plus a Policy/Signature pair. Caching or persisting that resolved
+   * URL anywhere works perfectly until the signature expires and then breaks
+   * playback for everyone, so the redirect must be followed fresh every time.
+   */
+  function audioUrl(entry) {
+    const base = (state.config && state.config.audio_base) || "";
+    if (!base) return `audio/${entry.audio_path}`;   // demoted local server
+    return `${base}/${entry.audio_path}`;
+  }
+
+  async function loadCorpus() {
+    const [config, manifest] = await Promise.all([
+      fetch("config.json").then((r) => r.json()),
+      fetch("manifest.json").then((r) => {
+        if (!r.ok) throw new Error(`manifest.json returned ${r.status}`);
+        return r.json();
+      }),
+    ]);
+    state.config = config;
+    state.entries = manifest;
+    dom.poolReadout.textContent = `${manifest.length} CLIPS IN POOL`;
+    // Disputes need the operator-side log, which only the fallback server has.
+    if (!config.api) dom.flag.hidden = true;
   }
 
   async function loadPuzzle() {
-    // If the unit was playing, the next clip picks up where this one left off:
-    // the context already exists and is running, so no new gesture is needed.
     const wasPlaying = state.playing;
     stopClip();
     stopDrone(true);
@@ -327,16 +384,16 @@
     dom.check.disabled = true;
     dom.flag.disabled = false;
     dom.flag.textContent = "FLAG THIS ANSWER";
+    clearError();
     renderKeys();
     setStatus("LOADING …");
 
-    const tier = dom.tier.value;
-    const resp = await fetch(`${apiBase()}/api/puzzle?tier=${encodeURIComponent(tier)}`);
-    if (!resp.ok) {
-      setStatus(`LOAD FAILED (${resp.status})`);
+    const pool = poolFor(dom.tier.value);
+    const puzzle = pickRandom(pool);
+    if (!puzzle) {
+      showError("NO PUZZLES IN THIS POOL.", "Pick another setting.");
       return;
     }
-    const puzzle = await resp.json();
     state.puzzle = puzzle;
 
     dom.title.textContent = puzzle.title;
@@ -345,23 +402,34 @@
     dom.attribution.textContent =
       `Audio: “${puzzle.title}” by ${puzzle.artist} — licensed ${puzzle.license}. ` +
       `Source: Free Music Archive. Key annotations: fma_keys (FMAK).`;
-    dom.tierReadout.textContent = (puzzle.difficulty || tier).toUpperCase();
+    dom.tierReadout.textContent = (puzzle.difficulty || "").toUpperCase();
     setStatus("PRESS PLAY TO START");
 
-    // Bytes are fetched now; decoding waits for the AudioContext, which cannot
-    // exist until the user gestures.
-    // audio_url is either a path served by this process or an absolute URL on a
-    // remote host (TT_AUDIO_BASE — e.g. a Hugging Face dataset). Both are fetched
-    // the same way; only the remote one depends on that host sending CORS headers.
-    const audioUrl = /^https?:\/\//.test(puzzle.audio_url)
-      ? puzzle.audio_url
-      : `${apiBase()}${puzzle.audio_url}`;
-    const audioResp = await fetch(audioUrl);
-    if (!audioResp.ok) {
-      setStatus(`AUDIO FAILED (${audioResp.status})`);
+    const url = audioUrl(puzzle);
+    let response;
+    try {
+      response = await fetch(url);
+    } catch (err) {
+      showError(
+        "COULD NOT REACH THE AUDIO HOST.",
+        "The clips stream from the Hugging Face CDN. Likely causes: you are offline, " +
+        "the CDN stopped sending an Access-Control-Allow-Origin header, or its rate " +
+        "limit (3000 requests / 5 min per IP) was hit. The local fallback server in " +
+        `this project can serve the clips instead. (${err.message})`,
+      );
       return;
     }
-    state.clipBytes = await audioResp.arrayBuffer();
+    if (!response.ok) {
+      showError(
+        `THE AUDIO HOST RETURNED ${response.status}.`,
+        response.status === 429
+          ? "That is the Hugging Face rate limit (3000 requests / 5 min per IP). Wait a few minutes."
+          : "The clip may have moved, or the dataset is unavailable. The local fallback server can serve the clips instead.",
+      );
+      return;
+    }
+
+    state.clipBytes = await response.arrayBuffer();
     if (audio.ctx) {
       await decodeClip();
       if (wasPlaying) startClip();
@@ -371,51 +439,60 @@
   async function decodeClip() {
     if (!state.clipBytes || !audio.ctx || state.clipBuffer) return;
     // decodeAudioData detaches the buffer, so decode a copy: a second decode
-    // (after a context restart) would otherwise get an empty ArrayBuffer.
+    // would otherwise get an empty ArrayBuffer.
     const copy = state.clipBytes.slice(0);
     state.clipBuffer = await audio.ctx.decodeAudioData(copy);
   }
 
+  /**
+   * Score the guess entirely in the browser.
+   *
+   * The answer file is fetched HERE and nowhere else — not on load, not on
+   * puzzle selection. That is what makes "peeking requires intent" true rather
+   * than merely claimed: until you commit, no request for the answer exists.
+   */
   async function submitGuess() {
     if (state.committedPc === null || !state.puzzle || state.answered) return;
-    const body = {
-      id: state.puzzle.id,
-      tonic_pc: state.committedPc,
-      mode: state.mode,
-    };
-    const resp = await fetch(`${apiBase()}/api/guess`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-      setStatus(`CHECK FAILED (${resp.status})`);
+    const guess = { id: state.puzzle.id, tonic_pc: state.committedPc, mode: state.mode };
+
+    let verifier;
+    try {
+      const resp = await fetch(`answers/${state.puzzle.id}.json`);
+      if (!resp.ok) throw new Error(`answers/${state.puzzle.id}.json returned ${resp.status}`);
+      verifier = (await resp.json()).h;
+    } catch (err) {
+      showError("COULD NOT LOAD THE ANSWER FOR THIS PUZZLE.", err.message);
       return;
     }
-    const verdict = await resp.json();
-    state.answered = true;
-    state.lastGuess = body;
 
+    const answer = await window.TTScoring.recoverAnswer(state.puzzle.id, verifier);
+    const bucket = window.TTScoring.classify(
+      guess.tonic_pc, guess.mode, answer.tonic_pc, answer.mode,
+    );
+    const keyDisplay = window.TTScoring.displayKey(answer.tonic_pc, answer.mode);
+    const guessDisplay = window.TTScoring.displayKey(guess.tonic_pc, guess.mode);
+
+    state.answered = true;
+    state.lastGuess = guess;
     state.stats.attempts += 1;
-    if (verdict.correct) state.stats.correct += 1;
-    const bucket = verdict.relative_error;
+    if (bucket === "exact") state.stats.correct += 1;
     state.stats.buckets[bucket] = (state.stats.buckets[bucket] || 0) + 1;
     renderStats();
 
     dom.result.hidden = false;
-    dom.resultBadge.textContent = verdict.correct ? "CORRECT" : bucket.toUpperCase();
-    dom.resultBadge.dataset.ok = String(verdict.correct);
-    dom.resultKey.textContent = verdict.key_display;
-    dom.resultText.textContent = verdict.explanation;
+    dom.resultBadge.textContent = bucket === "exact" ? "CORRECT" : bucket.toUpperCase();
+    dom.resultBadge.dataset.ok = String(bucket === "exact");
+    dom.resultKey.textContent = keyDisplay;
+    dom.resultText.textContent = window.TTScoring.explain(bucket, keyDisplay, guessDisplay);
     dom.check.disabled = true;
-    setStatus(verdict.correct ? "LOCKED IT" : "NOT QUITE — TRY THE NEXT ONE");
+    setStatus(bucket === "exact" ? "LOCKED IT" : "NOT QUITE — TRY THE NEXT ONE");
   }
 
   async function flagAnswer() {
-    if (!state.lastGuess) return;
+    if (!state.lastGuess || !state.config || !state.config.api) return;
     dom.flag.disabled = true;
     dom.flag.textContent = "FLAGGING …";
-    const resp = await fetch(`${apiBase()}/api/dispute`, {
+    const resp = await fetch("api/dispute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state.lastGuess),
@@ -457,9 +534,7 @@
     ensureContext();                     // synchronous, inside the gesture
     const pc = Number(key.dataset.pc);
     if (pc === state.auditioningPc) {
-      // Tapping the sounding key silences it but keeps it armed — the
-      // committed state stays visible on its own.
-      stopDrone(true);
+      stopDrone(true);                   // silence it, keep it armed
     } else {
       state.committedPc = pc;
       startDrone(pc);
@@ -524,6 +599,7 @@
       mode: state.mode,
       answered: state.answered,
       puzzleId: state.puzzle ? state.puzzle.id : null,
+      poolSize: state.entries.length,
       stats: JSON.parse(JSON.stringify(state.stats)),
       sameContextForClipAndDrone:
         Boolean(audio.ctx) &&
@@ -534,8 +610,6 @@
     reload: loadPuzzle,
   };
 
-  // Test-only: lets the suite reproduce a backgrounded tab, which headless
-  // browsers will not do on their own.
   window.__ttSuspendForTest = () => (audio.ctx ? audio.ctx.suspend() : Promise.resolve());
 
   /* ----------------------------------------------------------------- start */
@@ -543,9 +617,7 @@
   buildPiano();
   renderKeys();
   renderStats();
-  fetch(`${apiBase()}/api/health`)
-    .then((r) => r.json())
-    .then((h) => { dom.poolReadout.textContent = `${h.pool} CLIPS IN POOL`; })
-    .catch(() => { dom.poolReadout.textContent = "POOL UNAVAILABLE"; });
-  loadPuzzle();
+  loadCorpus()
+    .then(loadPuzzle)
+    .catch((err) => showError("COULD NOT LOAD THE PUZZLE LIST.", err.message));
 })();

@@ -7,6 +7,7 @@
  */
 
 const { test, expect } = require("@playwright/test");
+const { serveLocalClips } = require("./helpers");
 
 const KEY_NAME_IN_TEXT = /[A-G][#b]? (Major|minor)/;
 
@@ -41,6 +42,7 @@ async function instrument(page) {
 
 async function loadUnit(page) {
   await instrument(page);
+  await serveLocalClips(page);
   await page.goto("/");
   await expect(page.locator("#track-title")).not.toHaveText("—", { timeout: 20_000 });
   await page.waitForFunction(() => window.__tt && window.__tt.getState().puzzleId !== null);
@@ -210,9 +212,15 @@ test("the layout is usable with no horizontal overflow", async ({ page }) => {
 test("the faceplate collapses to a single column on a phone", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "webkit-iphone", "mobile layout only");
   const rows = await page.evaluate(() => {
-    const panels = [...document.querySelectorAll(".unit > *")];
-    return panels.map((p) => Math.round(p.getBoundingClientRect().left));
+    // Only elements that are actually laid out have a left edge — a hidden
+    // panel (the error banner, when there is no error) reports 0 and would
+    // otherwise look like a second column.
+    const panels = [...document.querySelectorAll(".unit > *")]
+      .map((p) => p.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0);
+    return panels.map((r) => Math.round(r.left));
   });
-  // A single column means every panel shares one left edge.
+  expect(rows.length).toBeGreaterThan(4);   // guard: the filter must not empty the list
+  // A single column means every visible panel shares one left edge.
   expect(new Set(rows).size).toBe(1);
 });

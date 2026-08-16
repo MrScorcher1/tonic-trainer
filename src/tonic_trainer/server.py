@@ -335,6 +335,21 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
             target = fetch_upstream(path, audio_base)
         return _serve_range(target, request.headers.get("range"))
 
+    @router.get("/config.json")
+    def config() -> JSONResponse:
+        """Override the static config.json when this server is the one serving.
+
+        The same docs/ tree is published to GitHub Pages, where config.json
+        points at the Hugging Face CDN. When this process serves it instead —
+        the demoted fallback role — the page must fetch audio from here, so the
+        base is emptied and the API-only features are switched back on.
+        """
+        return JSONResponse({
+            "audio_base": audio_base if (audio_base and not audio_proxy) else "",
+            "api": True,
+            "note": "served by the fallback FastAPI server, not GitHub Pages",
+        })
+
     @router.get("/api/health")
     def health() -> JSONResponse:
         return JSONResponse({"ok": True, "puzzles": len(entries), "pool": len(default_pool)})

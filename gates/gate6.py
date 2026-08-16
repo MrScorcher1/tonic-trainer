@@ -46,8 +46,8 @@ def strip_js_comments(src: str) -> str:
 
 def static_invariants() -> None:
     """Source-level invariants, checked without a browser."""
-    app_js = strip_js_comments((ROOT / "web" / "app.js").read_text())
-    index = (ROOT / "web" / "index.html").read_text()
+    app_js = strip_js_comments((ROOT / "docs" / "app.js").read_text())
+    index = (ROOT / "docs" / "index.html").read_text()
 
     check("no <audio> element in the markup", "<audio" not in index.lower())
     check("no `new Audio(` in the page script", "new Audio(" not in app_js)
@@ -62,10 +62,11 @@ def main() -> int:
     print("=== GATE 6 — frontend ===")
     static_invariants()
 
-    manifest = ROOT / "build" / "manifest.json"
+    manifest = ROOT / "docs" / "manifest.json"
     if not manifest.exists():
-        check("manifest exists for the e2e server", False, f"{manifest} missing — run phase 4")
-        print("\nGATE 6 FAILED: no manifest to serve")
+        check("static manifest exists for the e2e server", False,
+              f"{manifest} missing — run tonic_trainer.static_build")
+        print("\nGATE 6 FAILED: no static manifest to serve")
         return 1
 
     env = dict(os.environ)

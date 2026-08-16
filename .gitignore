@@ -31,3 +31,4 @@ SPEC.md
 .playwright/
 package-lock.json
 DEPLOY.md
+DIFFICULTY.md
