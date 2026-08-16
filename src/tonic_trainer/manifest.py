@@ -124,13 +124,19 @@ def build() -> list[dict]:
     from .phase2 import JOINED_PARQUET
 
     joined = pd.read_parquet(JOINED_PARQUET)
+    # Tracks the licence cross-check found ND evidence for stay out on a rebuild
+    # too — otherwise re-running this phase would quietly re-admit them.
+    nd_excluded_path = BUILD / "nd_excluded.json"
+    nd_excluded = set(json.loads(nd_excluded_path.read_text())) if nd_excluded_path.exists() else set()
+    if nd_excluded:
+        print(f"licence cross-check excludes {len(nd_excluded)} ND-flagged tracks")
     clip_paths = {}
     for path in CLIP_ROOT.rglob("*.mp3"):
         if path.stat().st_size > 0:
             clip_paths[int(path.stem)] = str(path.relative_to(CLIP_ROOT))
     print(f"clips on disk: {len(clip_paths)}")
 
-    entries = build_manifest(joined, clip_paths)
+    entries = [e for e in build_manifest(joined, clip_paths) if e["id"] not in nd_excluded]
     write_manifest(entries)
 
     tiers = pd.Series([e["difficulty"] for e in entries]).value_counts()

@@ -133,6 +133,19 @@ def cross_check(entry: dict, source_path: str | None, *, skip_web_verify: bool =
     )
 
 
+def nd_flagged_ids(conflicts: dict) -> set[str]:
+    """Puzzle ids where any source reports NoDerivatives."""
+    return {
+        c["id"] for c in conflicts["conflicts"]
+        if any("NoDerivatives" in reason for reason in c["reasons"])
+    }
+
+
+def conflicted_ids(conflicts: dict) -> set[str]:
+    """Every id excluded by the cross-check — ND or a genuine disagreement."""
+    return {c["id"] for c in conflicts["conflicts"] if c["excluded"]}
+
+
 def run(entries: list[dict], source_paths: dict[int, str], *,
         skip_web_verify: bool = True) -> dict:
     verdicts = [
@@ -159,3 +172,48 @@ def run(entries: list[dict], source_paths: dict[int, str], *,
     }
     CONFLICTS_JSON.write_text(json.dumps(payload, indent=1))
     return payload
+
+
+ND_EXCLUDED_JSON = BUILD / "nd_excluded.json"
+
+
+def main() -> None:
+    """Cross-check every manifest entry, then drop the ND-flagged ones.
+
+    An ID3 tag claiming BY-NC-ND while tracks.csv says otherwise is not a
+    publication-only problem: cutting a 30 s loop out of that track is the
+    derivative work §1.4 forbids, whoever is serving it. Two sources disagree
+    and one of them says no — so the track goes, in the app as well as in any
+    upload. The non-ND disagreements (mostly NC-vs-not) only bite on
+    redistribution, so those stay in the app and are excluded from the bundle.
+    """
+    from .manifest import MANIFEST_JSON, load_manifest, write_manifest
+    from .phase3 import AUDIO_ROOT
+
+    entries = load_manifest()
+    source_paths = {int(p.stem): str(p) for p in AUDIO_ROOT.rglob("*.mp3")}
+    if not source_paths:
+        raise FileNotFoundError(
+            f"no source tracks under {AUDIO_ROOT} — the ID3 cross-check must run "
+            "before the full tracks are deleted; clips carry no tags "
+            "(-map_metadata -1)."
+        )
+
+    report = run(entries, source_paths, skip_web_verify=True)
+    nd_ids = nd_flagged_ids(report)
+    kept = [e for e in entries if e["id"] not in nd_ids]
+
+    print(f"checked            : {report['checked']}")
+    print(f"with ID3 signal    : {report['with_tag_signal']}")
+    print(f"without ID3 signal : {report['without_tag_signal']}  (missing is not disagreement)")
+    print(f"excluded from push : {report['excluded']}")
+    print(f"  of those, ND     : {len(nd_ids)}  -> also dropped from the served manifest")
+    print(f"manifest           : {len(entries)} -> {len(kept)}")
+
+    ND_EXCLUDED_JSON.write_text(json.dumps(sorted(nd_ids), indent=1))
+    write_manifest(kept)
+    print(f"written            : {CONFLICTS_JSON}, {ND_EXCLUDED_JSON}, {MANIFEST_JSON}")
+
+
+if __name__ == "__main__":
+    main()

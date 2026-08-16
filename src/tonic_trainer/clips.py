@@ -19,6 +19,7 @@ clean file, mono, 128 kbps, keeps the loop seamless and the transfer small
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -35,6 +36,9 @@ MIN_SOURCE_SECONDS = 35.0
 CLIP_BITRATE = "128k"
 CLIP_SAMPLE_RATE = "44100"
 CLIP_REPORT = BUILD / "clips.json"
+# Below this the clip has no usable signal. Digital silence reports -91 dB;
+# a quiet but real intro sits around -30 to -40 dB.
+MIN_MEAN_VOLUME_DB = -55.0
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,26 @@ class ClipResult:
     reason: str
     source_seconds: float | None = None
     clip_seconds: float | None = None
+
+
+def mean_volume_db(path: Path) -> float:
+    """Mean volume in dBFS via ffmpeg's volumedetect. Raises if it says nothing.
+
+    Cutting from the opening makes silence a live hazard: a track that fades in,
+    or starts with a few seconds of room tone, can yield a clip with no pitched
+    content at all. You cannot hunt a tonic in silence, so such clips must never
+    reach the manifest — and Phase 4b's estimator raises on them anyway, which is
+    how this was found.
+    """
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostdin", "-i", str(path),
+         "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", proc.stderr)
+    if not match:
+        raise ValueError(f"{path}: ffmpeg volumedetect reported no mean_volume")
+    return float(match.group(1))
 
 
 def probe_duration(path: Path) -> float:
@@ -102,6 +126,17 @@ def clip_one(args: tuple[int, str, str]) -> ClipResult:
     if not (25.0 <= clip_len <= 35.0):
         return ClipResult(track_id, None, False,
                           f"clip duration {clip_len:.1f}s outside 25-35s", duration, clip_len)
+
+    try:
+        volume = mean_volume_db(out)
+    except Exception as exc:  # noqa: BLE001
+        return ClipResult(track_id, None, False, f"volume probe failed: {exc}", duration, clip_len)
+
+    if volume < MIN_MEAN_VOLUME_DB:
+        # Derived data: remove it so nothing downstream can pick it up off disk.
+        out.unlink(missing_ok=True)
+        return ClipResult(track_id, None, False,
+                          f"clip is silent ({volume:.1f} dBFS)", duration, clip_len)
 
     return ClipResult(track_id, rel_path, True, "ok", duration, clip_len)
 

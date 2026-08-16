@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from .clips import CLIP_ROOT
-from .crosscheck import CONFLICTS_JSON
+from .crosscheck import CONFLICTS_JSON, conflicted_ids
 from .manifest import load_manifest
 from .paths import BUILD
 
@@ -172,6 +172,17 @@ Either way the local clips remain the default if you set neither flag.
 def build(*, confirm: bool) -> dict:
     entries = load_manifest()
     conflicts = json.loads(CONFLICTS_JSON.read_text()) if CONFLICTS_JSON.exists() else None
+    if conflicts is None:
+        raise FileNotFoundError(
+            f"{CONFLICTS_JSON} missing — run the licence cross-check before preparing "
+            "an upload. It needs the full tracks' ID3 tags, so it cannot be run later."
+        )
+    # Every genuine disagreement is excluded from publication, not just the ND
+    # ones: redistribution is where an NC-vs-not conflict starts to matter.
+    excluded = conflicted_ids(conflicts)
+    entries = [e for e in entries if e["id"] not in excluded]
+    print(f"licence cross-check excludes {len(excluded)} ids from publication; "
+          f"{len(entries)} clips remain")
     files = [(e, CLIP_ROOT / e["audio_path"]) for e in entries]
     missing = [e["id"] for e, p in files if not p.exists()]
     if missing:

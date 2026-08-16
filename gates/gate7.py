@@ -71,9 +71,19 @@ def main() -> int:
         check("attribution.csv has one row per clip", len(rows) - 1 == len(clips),
               f"{len(rows) - 1} rows vs {len(clips)} clips")
 
+    # A real check, not a string search: the previous version matched the
+    # `hf upload` command printed inside UPLOAD.md's text and called the
+    # documentation a push. What actually constitutes a push is importing the
+    # Hub client or shelling out to the CLI.
     sources = "\n".join(p.read_text() for p in (ROOT / "src").rglob("*.py"))
-    pushes = re.findall(r"hf\s+upload|upload_folder|create_commit|HfApi\(", sources)
-    check("no code path pushes to the Hub", not pushes, str(set(pushes)))
+    imports = re.findall(r"^\s*(?:from|import)\s+huggingface_hub", sources, re.MULTILINE)
+    check("no source module imports the Hub client", not imports, str(imports))
+
+    shells = re.findall(r"""(?:subprocess|Popen|run|call)\s*\(\s*\[?\s*["']hf["']""", sources)
+    check("no source module shells out to the hf CLI", not shells, str(shells))
+
+    api_calls = re.findall(r"\b(?:upload_folder|upload_file|create_commit|HfApi)\s*\(", sources)
+    check("no source module calls a Hub upload API", not api_calls, str(set(api_calls)))
 
     print()
     if FAILURES:
