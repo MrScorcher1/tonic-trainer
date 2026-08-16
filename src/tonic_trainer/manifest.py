@@ -34,7 +34,14 @@ MANIFEST_JSON = BUILD / "manifest.json"
 # "Prelude In F Major" — displaying its title would trip the answer-leak
 # detector for reasons that have nothing to do with a leak.
 LEAK_WORDS = re.compile(r"tonic_pc|mode|key_display", re.IGNORECASE)
-KEY_NAME_IN_TEXT = re.compile(r"[A-G][#b]? (Major|minor)")
+
+# Case-insensitive, with a word boundary before the note letter. The earlier
+# case-sensitive form missed a real leak: "Prelude In D Minor" IS in D minor, and
+# the title is on screen before the user answers — capital "Minor" walked straight
+# through. The boundary is what keeps the rule from eating innocent prose: it
+# drops "In D Minor" but keeps "The Minor Thirds" and "Sea Minor", where the
+# apparent note letter is the tail of another word.
+KEY_NAME_IN_TEXT = re.compile(r"\b[A-G][#b]?\s+(major|minor)\b", re.IGNORECASE)
 
 TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
 

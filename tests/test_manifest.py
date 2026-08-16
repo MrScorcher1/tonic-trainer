@@ -74,7 +74,13 @@ def test_leak_patterns_match_what_the_gates_look_for():
     assert not LEAK_WORDS.search("Ordinary Title")
     assert KEY_NAME_IN_TEXT.search("Prelude In F Major")
     assert KEY_NAME_IN_TEXT.search("Study in C minor")
-    assert not KEY_NAME_IN_TEXT.search("Major Tom")  # no note letter in front
+    # Capital "Minor" is the case the original case-sensitive rule missed, on a
+    # track that really is in D minor.
+    assert KEY_NAME_IN_TEXT.search("Prelude In D Minor")
+    assert KEY_NAME_IN_TEXT.search("Nocturne in Bb Major")
+    assert not KEY_NAME_IN_TEXT.search("Major Tom")       # no note letter in front
+    assert not KEY_NAME_IN_TEXT.search("The Minor Thirds")  # "e" is the tail of "The"
+    assert not KEY_NAME_IN_TEXT.search("Sea Minor")         # "a" is the tail of "Sea"
 
 
 def test_manifest_rejects_a_row_that_cannot_be_attributed():

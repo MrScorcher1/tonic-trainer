@@ -30,3 +30,4 @@ SPEC.md
 .npm-cache/
 .playwright/
 package-lock.json
+DEPLOY.md

@@ -1,0 +1,5 @@
+{
+ "audio_base": "https://huggingface.co/datasets/MrScorcher1/tonic-trainer/resolve/main/clips",
+ "api": false,
+ "note": "Static build. audio_base must stay the resolve/ URL \u2014 what it redirects to is signed and expires."
+}
