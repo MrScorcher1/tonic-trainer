@@ -7,6 +7,7 @@ from tonic_trainer.manifest import (
     DEFAULT_POOL,
     KEY_NAME_IN_TEXT,
     LEAK_WORDS,
+    TAGGED_POOL,
     assign_tier,
     build_manifest,
     key_distribution,
@@ -88,15 +89,27 @@ def test_empty_manifest_is_an_error_not_an_empty_list():
         build_manifest(df, {})
 
 
-def test_served_pool_excludes_untagged_by_default():
+# REMOVAL-OK: test_served_pool_excludes_untagged_by_default asserted the old
+# default. Untagged is now served by default (see the DEFAULT_POOL note in
+# manifest.py); the two tests below cover both the new default and the filter
+# that restores the old behaviour.
+def test_served_pool_includes_untagged_by_default():
     entries = [
         {"difficulty": "tier1", "key_display": "C Major"},
         {"difficulty": "tier3", "key_display": "A minor"},
         {"difficulty": "untagged", "key_display": "C Major"},
     ]
     pool = served_pool(entries)
-    assert len(pool) == 2
+    assert len(pool) == 3
     assert all(e["difficulty"] in DEFAULT_POOL for e in pool)
+
+
+def test_tagged_pool_excludes_untagged():
+    entries = [
+        {"difficulty": "tier1", "key_display": "C Major"},
+        {"difficulty": "untagged", "key_display": "C Major"},
+    ]
+    assert [e["difficulty"] for e in served_pool(entries, TAGGED_POOL)] == ["tier1"]
     assert served_pool(entries, ("untagged",))[0]["difficulty"] == "untagged"
 
 

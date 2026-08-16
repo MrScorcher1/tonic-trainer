@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .clips import CLIP_ROOT
-from .manifest import DEFAULT_POOL, load_manifest
+from .manifest import DEFAULT_POOL, TAGGED_POOL, load_manifest
 from .paths import BUILD, WEB
 from .scoring import classify, explain
 
@@ -251,6 +251,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
     for e in entries:
         by_tier.setdefault(e["difficulty"], []).append(e)
     default_pool = [e for e in entries if e["difficulty"] in DEFAULT_POOL]
+    tagged_pool = [e for e in entries if e["difficulty"] in TAGGED_POOL]
     if not default_pool:
         raise ValueError("no puzzles in the default serving pool")
 
@@ -266,6 +267,9 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
     def get_puzzle(tier: str | None = None) -> JSONResponse:
         if tier in (None, "", "any", "default"):
             pool = default_pool
+        elif tier == "tagged":
+            # The default now includes untagged; this is how it is turned off.
+            pool = tagged_pool
         elif tier in by_tier:
             pool = by_tier[tier]
         else:

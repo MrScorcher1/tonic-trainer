@@ -160,6 +160,31 @@ tonal clarity: 49.3% vs 44.3% estimator agreement. The cost is that leading
 silence becomes possible, so every clip is checked with `volumedetect` and
 anything under −55 dBFS is dropped (one clip in 3,610 was digital silence).
 
+**The untagged pool is served by default — the reason for hiding it was measured
+and failed.** The spec excluded tracks with no `genre_top` because they "skew
+experimental/ambient and may have no audible tonal center". Measuring every clip
+in each pool refuted that:
+
+| pool | n | exact | tonic-only |
+|---|---|---|---|
+| untagged | 1,929 | **51.5%** | 58.7% |
+| tier3 | 766 | 49.9% | 60.4% |
+| tier1+tier2 | 627 | 45.9% | 57.3% |
+
+(Chance under an independent pairing is ~4.2% / ~8.3%.) Untagged is 12× chance
+and scores *higher* than the pool that was being served. The same measurement
+shows the tier prior **inverts** — tier3 beats tier1+tier2 — so genre does not
+rank tonal clarity in this corpus. The default changed because the stated premise
+did not survive testing, not because a bigger corpus was preferred. Reproduce
+with `tools/untagged_check.py`; select `GENRE-LABELLED ONLY` in the app to
+restore the old behaviour.
+
+**Open question the numbers cannot settle.** Krumhansl-Schmuckler measures tonal
+clarity *as the algorithm sees it*. Sustained ambient material yields a clean,
+stable chroma and can score well while making a poor drone-hunting exercise — a
+track that is itself a drone defeats the exercise. **A listening test on the
+untagged pool has not been performed.** Treat it as open.
+
 **Krumhansl-Schmuckler's characteristic failure is the fifth, not the relative.**
 Gate 4b originally required `relative` to be the largest error bucket. It never
 is: `fifth` dominated in all five variants tested (both clip positions, three

@@ -33,10 +33,26 @@ def test_tier_filter(client, manifest):
     assert client.get("/api/puzzle", params={"tier": "nope"}).status_code == 404
 
 
-def test_untagged_is_not_in_the_default_pool(client, manifest):
+# REMOVAL-OK: test_untagged_is_not_in_the_default_pool asserted the opposite of
+# the behaviour the user chose after the measurement. It is inverted below rather
+# than deleted, and `test_tagged_filter_turns_untagged_back_off` now covers the
+# exclusion path it used to guard.
+def test_untagged_is_in_the_default_pool(client, manifest):
+    # The default changed once the premise behind excluding untagged was
+    # measured and failed — see the note on DEFAULT_POOL in manifest.py.
     by_id = {e["id"]: e for e in manifest}
-    seen = {by_id[client.get("/api/puzzle").json()["id"]]["difficulty"] for _ in range(80)}
+    seen = {by_id[client.get("/api/puzzle").json()["id"]]["difficulty"] for _ in range(120)}
+    assert "untagged" in seen
+
+
+def test_tagged_filter_turns_untagged_back_off(client, manifest):
+    by_id = {e["id"]: e for e in manifest}
+    seen = {
+        by_id[client.get("/api/puzzle", params={"tier": "tagged"}).json()["id"]]["difficulty"]
+        for _ in range(120)
+    }
     assert "untagged" not in seen
+    assert seen <= {"tier1", "tier2", "tier3"}
 
 
 def test_correct_answer_scores_correct(client, manifest):
@@ -171,7 +187,8 @@ def test_health_reports_pool_size(client, manifest):
     body = client.get("/api/health").json()
     assert body["ok"] is True
     assert body["puzzles"] == len(manifest)
-    assert body["pool"] == len([e for e in manifest if e["difficulty"] != "untagged"])
+    # The default pool is the whole corpus now, untagged included.
+    assert body["pool"] == len(manifest)
 
 
 def test_dispute_is_logged_with_triage(client, manifest, monkeypatch, tmp_path):

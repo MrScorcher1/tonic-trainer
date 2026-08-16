@@ -37,7 +37,30 @@ LEAK_WORDS = re.compile(r"tonic_pc|mode|key_display", re.IGNORECASE)
 KEY_NAME_IN_TEXT = re.compile(r"[A-G][#b]? (Major|minor)")
 
 TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
-DEFAULT_POOL = ("tier1", "tier2", "tier3")  # `untagged` is opt-in only
+
+# `untagged` was originally excluded from the default pool on the spec's claim
+# that those tracks "skew experimental/ambient and may have no audible tonal
+# center". That premise was measured over every clip in each pool and FAILED:
+#
+#     untagged      n=1929   exact 51.5%   tonic-only 58.7%
+#     tier3         n= 766   exact 49.9%   tonic-only 60.4%
+#     tier1+tier2   n= 627   exact 45.9%   tonic-only 57.3%
+#     (chance under an independent pairing: ~4.2% / ~8.3%)
+#
+# Untagged is 12x chance and scores HIGHER than the pool that was being served.
+# The same measurement showed the tier prior inverts: tier3 outscores
+# tier1+tier2, so genre does not rank tonal clarity here. The default changed
+# because the stated premise was tested and did not hold — not because a bigger
+# corpus was preferred. Reproduce with tools/untagged_check.py.
+#
+# OPEN QUESTION THE NUMBERS CANNOT SETTLE: Krumhansl-Schmuckler measures tonal
+# clarity as the ALGORITHM sees it. Sustained ambient material yields a clean,
+# stable chroma and can score well while making a poor drone-hunting exercise —
+# a track that is itself a drone defeats the exercise. A listening test on the
+# untagged pool has NOT been performed. A future reader should assume it is
+# still open rather than that it was done and passed.
+DEFAULT_POOL = ("tier1", "tier2", "tier3", "untagged")
+TAGGED_POOL = ("tier1", "tier2", "tier3")  # `tier=tagged` turns untagged back off
 MAX_KEY_SHARE = 0.25
 
 
