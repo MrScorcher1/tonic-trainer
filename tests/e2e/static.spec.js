@@ -33,6 +33,29 @@ test("GATE S3: 50 draws return at least 40 distinct puzzles", async ({ page }) =
   expect(ids.length).toBeGreaterThanOrEqual(40);
 });
 
+test("the deployed ratings endpoint reaches the client, and an unreachable one fails soft",
+  async ({ page }) => {
+    // Verifies the build actually wired config.json through to the rating
+    // module — "the rebuild wrote it" and "the client uses it" are different
+    // claims. The endpoint is unreachable from the test sandbox, which makes
+    // this a real fail-soft exercise rather than a simulated one.
+    await page.goto("/");
+    await waitForPuzzle(page);
+
+    const config = await page.evaluate(async () => (await fetch("config.json")).json());
+    const debug = await page.evaluate(() => window.TTRatings.debug());
+    expect(debug.endpoint).toBe(config.ratings_endpoint);
+    expect(debug.batchSize).toBe(config.ratings_batch_size);
+    expect(debug.priorWeight).toBe(config.ratings_prior_weight);
+
+    // Unreachable service, app still fully playable.
+    await page.click('.key[data-pc="0"]');
+    await page.click("#btn-check");
+    await expect(page.locator("#result")).toBeVisible();
+    await expect(page.locator("#difficulty-dots")).toBeVisible();
+    await expect(page.locator("#error")).toBeHidden();
+  });
+
 test("the manifest response body carries no answer field", async ({ page }) => {
   const bodies = [];
   page.on("response", async (response) => {

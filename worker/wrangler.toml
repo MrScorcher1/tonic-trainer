@@ -11,4 +11,4 @@ compatibility_date = "2026-08-16"
 # prints the exact TOML block to copy.
 [[kv_namespaces]]
 binding = "RATINGS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "f39ab365d71b41c29899b90cb6bc67dc"
