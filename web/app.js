@@ -311,6 +311,9 @@
   }
 
   async function loadPuzzle() {
+    // If the unit was playing, the next clip picks up where this one left off:
+    // the context already exists and is running, so no new gesture is needed.
+    const wasPlaying = state.playing;
     stopClip();
     stopDrone(true);
     state.puzzle = null;
@@ -322,6 +325,8 @@
     state.lastGuess = null;
     dom.result.hidden = true;
     dom.check.disabled = true;
+    dom.flag.disabled = false;
+    dom.flag.textContent = "FLAG THIS ANSWER";
     renderKeys();
     setStatus("LOADING …");
 
@@ -351,7 +356,10 @@
       return;
     }
     state.clipBytes = await audioResp.arrayBuffer();
-    if (audio.ctx) await decodeClip();
+    if (audio.ctx) {
+      await decodeClip();
+      if (wasPlaying) startClip();
+    }
   }
 
   async function decodeClip() {
