@@ -1,0 +1,28 @@
+# raw downloads and derived artifacts
+data/
+build/
+.venv/
+.uv-cache/
+.uv-python/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+test-results/
+playwright-report/
+
+# workspace-mount artifacts that appear as char devices in this checkout
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.idea
+.mcp.json
+.profile
+.ripgreprc
+.vscode
+.zprofile
+.zshrc
+.flow/
+.claude/
+SPEC.md
