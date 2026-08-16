@@ -27,3 +27,6 @@ playwright-report/
 .claude/
 SPEC.md
 *.egg-info/
+.npm-cache/
+.playwright/
+package-lock.json

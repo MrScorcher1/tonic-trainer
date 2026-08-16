@@ -1,1 +1,124 @@
-<h1>placeholder</h1>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Tonic Trainer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="unit" id="unit">
+
+  <header class="unit__head">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">Tonic&nbsp;Trainer</span>
+      <span class="brand__model">TT&#8209;12 · ear training unit</span>
+    </div>
+    <div class="lamps">
+      <span class="lamp" id="lamp-power" data-on="true" title="power"><i></i>PWR</span>
+      <span class="lamp lamp--play" id="lamp-play" title="clip running"><i></i>CLIP</span>
+      <span class="lamp lamp--drone" id="lamp-drone" title="drone sounding"><i></i>DRONE</span>
+    </div>
+  </header>
+
+  <section class="screen" aria-live="polite">
+    <div class="screen__inner">
+      <div class="screen__row screen__row--title">
+        <span class="screen__label">NOW LOOPING</span>
+        <span class="screen__value" id="track-title">—</span>
+      </div>
+      <div class="screen__row">
+        <span class="screen__label">ARTIST</span>
+        <span class="screen__value" id="track-artist">—</span>
+      </div>
+      <div class="screen__row">
+        <span class="screen__label">LICENSE</span>
+        <span class="screen__value screen__value--small" id="track-license">—</span>
+      </div>
+      <div class="screen__bar">
+        <span id="status-line">PRESS PLAY TO START</span>
+        <span id="tier-readout">TIER 1</span>
+      </div>
+    </div>
+  </section>
+
+  <p class="attribution" id="attribution">Audio: — · — · —</p>
+
+  <section class="console">
+    <div class="console__transport">
+      <button class="btn btn--big btn--play" id="btn-play" type="button">
+        <span class="btn__glyph" aria-hidden="true">&#9654;</span><span class="btn__text">PLAY</span>
+      </button>
+      <button class="btn btn--toggle is-on" id="btn-loop" type="button" aria-pressed="true">LOOP</button>
+      <label class="select">
+        <span>POOL</span>
+        <select id="tier-select">
+          <option value="tier1" selected>TIER 1 · plainest</option>
+          <option value="tier2">TIER 2 · minor</option>
+          <option value="tier3">TIER 3 · other genres</option>
+          <option value="any">MIXED</option>
+          <option value="untagged">UNTAGGED · no genre</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="console__mixer">
+      <div class="fader">
+        <label for="mix-clip">CLIP</label>
+        <input type="range" id="mix-clip" min="0" max="100" value="70" orient="vertical">
+        <output id="mix-clip-out">70</output>
+      </div>
+      <div class="fader">
+        <label for="mix-drone">DRONE</label>
+        <input type="range" id="mix-drone" min="0" max="100" value="45" orient="vertical">
+        <output id="mix-drone-out">45</output>
+      </div>
+    </div>
+  </section>
+
+  <section class="keyboard-panel">
+    <div class="keyboard-panel__hint">
+      TAP A KEY — IT DRONES THAT PITCH OVER THE CLIP <em>AND</em> ARMS IT AS YOUR TONIC
+    </div>
+    <div class="piano" id="piano" role="group" aria-label="Tonic keyboard"></div>
+    <div class="armed">
+      <span class="armed__label">ARMED</span>
+      <span class="armed__value" id="armed-readout">—</span>
+      <button class="btn btn--ghost" id="btn-drone-off" type="button">SILENCE DRONE</button>
+    </div>
+  </section>
+
+  <section class="verdict-panel">
+    <div class="mode-switch" role="group" aria-label="Mode">
+      <button class="btn btn--mode is-on" id="btn-major" type="button" aria-pressed="true">MAJOR</button>
+      <button class="btn btn--mode" id="btn-minor" type="button" aria-pressed="false">MINOR</button>
+    </div>
+    <button class="btn btn--check" id="btn-check" type="button" disabled>CHECK</button>
+    <button class="btn btn--ghost" id="btn-next" type="button">NEXT CLIP</button>
+  </section>
+
+  <section class="result" id="result" hidden>
+    <div class="result__head">
+      <span class="result__badge" id="result-badge">—</span>
+      <span class="result__key" id="result-key">—</span>
+    </div>
+    <p class="result__text" id="result-text"></p>
+    <button class="btn btn--ghost btn--flag" id="btn-flag" type="button">FLAG THIS ANSWER</button>
+  </section>
+
+  <section class="stats">
+    <h2>SESSION</h2>
+    <div class="stats__grid" id="stats-grid"></div>
+    <p class="stats__note">Session only. Nothing is stored — reload and this unit forgets you.</p>
+  </section>
+
+  <footer class="unit__foot">
+    <span>Tonic Trainer · stateless · local-first</span>
+    <span id="pool-readout">—</span>
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

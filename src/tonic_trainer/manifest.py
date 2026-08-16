@@ -29,7 +29,12 @@ MANIFEST_JSON = BUILD / "manifest.json"
 # ("Modern Man", "Airplane Mode"): 12 of 3636 usable tracks do. Those 12 are
 # dropped rather than making the leak check fuzzy. Losing 0.3% of the corpus is
 # cheaper than an answer-leak test that has to reason about which "mode" is real.
+# The second alternative is Gate 6's rule: the page must contain no text
+# matching a key name before submission. Exactly one usable track is called
+# "Prelude In F Major" — displaying its title would trip the answer-leak
+# detector for reasons that have nothing to do with a leak.
 LEAK_WORDS = re.compile(r"tonic_pc|mode|key_display", re.IGNORECASE)
+KEY_NAME_IN_TEXT = re.compile(r"[A-G][#b]? (Major|minor)")
 
 TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
 DEFAULT_POOL = ("tier1", "tier2", "tier3")  # `untagged` is opt-in only
@@ -62,7 +67,8 @@ def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dic
         if rel is None:
             continue
         genre_text = "" if pd.isna(row.genre_top) else str(row.genre_top)
-        if LEAK_WORDS.search(f"{row.title} {row.artist} {genre_text}"):
+        attribution_text = f"{row.title} {row.artist} {genre_text}"
+        if LEAK_WORDS.search(attribution_text) or KEY_NAME_IN_TEXT.search(attribution_text):
             leak_dropped.append(int(row.track_id))
             continue
         title = str(row.title).strip()
