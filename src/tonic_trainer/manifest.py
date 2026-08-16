@@ -12,6 +12,7 @@ tiering needed per-response storage, which the stateless architecture forbids
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 import pandas as pd
@@ -20,6 +21,15 @@ from .clips import CLIP_ROOT
 from .paths import BUILD
 
 MANIFEST_JSON = BUILD / "manifest.json"
+
+# Gate 5 asserts that a served puzzle's raw JSON contains none of the strings
+# `tonic_pc`, `mode`, `key_display` — a pure string check, deliberately blind to
+# structure, because that is what catches an answer leaking through an
+# unexpected field. Attribution text can contain those substrings innocently
+# ("Modern Man", "Airplane Mode"): 12 of 3636 usable tracks do. Those 12 are
+# dropped rather than making the leak check fuzzy. Losing 0.3% of the corpus is
+# cheaper than an answer-leak test that has to reason about which "mode" is real.
+LEAK_WORDS = re.compile(r"tonic_pc|mode|key_display", re.IGNORECASE)
 
 TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
 DEFAULT_POOL = ("tier1", "tier2", "tier3")  # `untagged` is opt-in only
@@ -44,11 +54,16 @@ def puzzle_id(track_id: int) -> str:
 def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dict]:
     """Rows that are usable *and* have a derived clip become puzzles."""
     entries: list[dict] = []
+    leak_dropped: list[int] = []
     for row in joined.itertuples(index=False):
         if not row.usable:
             continue
         rel = clip_paths.get(int(row.track_id))
         if rel is None:
+            continue
+        genre_text = "" if pd.isna(row.genre_top) else str(row.genre_top)
+        if LEAK_WORDS.search(f"{row.title} {row.artist} {genre_text}"):
+            leak_dropped.append(int(row.track_id))
             continue
         title = str(row.title).strip()
         artist = str(row.artist).strip()
@@ -71,6 +86,9 @@ def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dic
                 "difficulty": assign_tier(row.genre_top, str(row.mode)),
             }
         )
+    if leak_dropped:
+        print(f"dropped {len(leak_dropped)} tracks whose attribution contains a leak-check "
+              f"substring (see LEAK_WORDS): {leak_dropped[:6]}")
     if not entries:
         raise ValueError("manifest is empty — no usable track had a derived clip")
     return entries
