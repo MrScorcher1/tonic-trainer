@@ -193,10 +193,52 @@ near-miss (correct 1.0, fifth 0.5, relative 0.3, parallel 0.2). The criterion wa
 amended to accept either, with the evidence recorded in `gates/gate4b.py`. No
 numeric threshold was changed.
 
+## Difficulty, and what the player ratings can prove
+
+Each clip carries a computed `difficulty` of 1–3 and a `genre` (the real genre,
+or `Ungenred`). They are two independent fields because the old `tier1/2/3`
+scheme claimed a ranking that measurement **inverted** — tier1 scored worst.
+
+Difficulty is built from two margins on the Krumhansl-Schmuckler correlations,
+measured against the *labelled* key: how far the labelled key beats the best
+rival **tonic**, and how far it beats its own relative and parallel (the **mode**
+decision). A `chroma_variance` guard overrides both: material too static (a
+sustained drone — a terrible puzzle, since you would be droning against a drone)
+or too volatile (the tonal centre moves) is forced to 3 and logged. The combined
+score is binned into **terciles of this corpus**, so "3" means *harder than most
+songs here*, not an absolute claim about music. Weights are equal and deliberately
+untuned; tuning them until the distribution looked right would be the
+estimator-tuning sin in a new costume.
+
+**It is computed, not validated.** Nothing has checked it against human
+performance.
+
+Players can rate each clip 1–3 after answering — optional, off to the side, never
+required to move on. Ratings live in memory for the session, batch to a
+Cloudflare Worker (see `worker/`), and are lost on reload. **The difficulty is
+shown from the start**, which decides what those ratings can prove:
+
+* **Disagreement is evidence.** A song players consistently call 3 against a
+  computed 1 is genuine signal — the anchor pushed the other way.
+* **Agreement is not.** A vote matching the prior may just be repeating it.
+
+So the ratings can **reliably flag individual badly-misrated songs**, and that is
+the only claim they support. They do not validate the difficulty model, and any
+"players agree with the algorithm N% of the time" figure would be partly an
+artifact of the display rather than evidence. None is computed.
+
 ## Known limitations
 
 * Clips are the opening 30 seconds, so you hear whatever the track starts with —
   sometimes an intro rather than the material that establishes the key.
+* **Titles can embed the answer.** "Prelude In D Minor" *is* in D minor, and the
+  title is on screen before you answer. This is a class of defect, not a one-off:
+  any attribution text naming a key spoils its own puzzle. The filter that drops
+  such tracks was originally case-sensitive and matched only lowercase "minor",
+  so the capitalised title walked straight through — Gate S1 caught it. The rule
+  is now case-insensitive with a word boundary, which drops "In D Minor" while
+  keeping "The Minor Thirds" and "Sea Minor", where the apparent note letter is
+  the tail of another word. Any new metadata source needs the same check.
 * `fma_keys` is a lightly-reviewed, single-annotator set. Labels are human-made
   but not cross-checked, hence the FLAG button: a dispute is auto-triaged by
   re-running the estimator on that one track and escalated only when the

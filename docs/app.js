@@ -37,7 +37,6 @@
   const A4 = 440;
   const DRONE_ATTACK = 0.04;
   const DRONE_RELEASE = 0.08;
-  const TAGGED_TIERS = ["tier1", "tier2", "tier3"];
 
   const el = (id) => document.getElementById(id);
   const dom = {
@@ -47,11 +46,15 @@
     attribution: el("attribution"),
     error: el("error"),
     status: el("status-line"),
-    tierReadout: el("tier-readout"),
+    genreReadout: el("genre-readout"),
     poolReadout: el("pool-readout"),
     play: el("btn-play"),
     loop: el("btn-loop"),
-    tier: el("tier-select"),
+    genre: el("genre-select"),
+    level: el("difficulty-select"),
+    rateRow: el("rate-row"),
+    difficultyDots: el("difficulty-dots"),
+    difficultyNote: el("difficulty-note"),
     mixClip: el("mix-clip"),
     mixDrone: el("mix-drone"),
     mixClipOut: el("mix-clip-out"),
@@ -86,8 +89,8 @@
     auditioningPc: null,
     mode: "major",
     answered: false,
+    rated: false,          // rated or explicitly skipped for THIS puzzle
     lastGuess: null,
-    answerRequests: 0,
     stats: { attempts: 0, correct: 0, buckets: {} },
   };
 
@@ -320,10 +323,15 @@
 
   /* ------------------------------------------------------------- puzzle IO */
 
-  function poolFor(tier) {
-    if (tier === "tagged") return state.entries.filter((e) => TAGGED_TIERS.includes(e.difficulty));
-    if (!tier || tier === "any") return state.entries;
-    return state.entries.filter((e) => e.difficulty === tier);
+  /** Genre and difficulty are independent filters; the default is everything. */
+  function currentPool() {
+    const genre = dom.genre.value;
+    const level = dom.level.value;
+    return state.entries.filter((e) => {
+      if (genre !== "any" && e.genre !== genre) return false;
+      if (level !== "any" && Number(e.difficulty) !== Number(level)) return false;
+      return true;
+    });
   }
 
   /** Unbiased pick from a cryptographic source — no seeded sequence, no memory. */
@@ -367,6 +375,18 @@
     dom.poolReadout.textContent = `${manifest.length} CLIPS IN POOL`;
     // Disputes need the operator-side log, which only the fallback server has.
     if (!config.api) dom.flag.hidden = true;
+
+    const genres = [...new Set(manifest.map((e) => e.genre))].sort();
+    genres.forEach((genre) => {
+      const option = document.createElement("option");
+      option.value = genre;
+      option.textContent = genre.toUpperCase();
+      dom.genre.appendChild(option);
+    });
+
+    // Ratings are optional infrastructure: if the endpoint is absent or down the
+    // app plays on with the algorithmic difficulty.
+    await window.TTRatings.init(config);
   }
 
   async function loadPuzzle() {
@@ -379,16 +399,20 @@
     state.committedPc = null;
     state.auditioningPc = null;
     state.answered = false;
+    state.rated = false;
     state.lastGuess = null;
     dom.result.hidden = true;
     dom.check.disabled = true;
     dom.flag.disabled = false;
     dom.flag.textContent = "FLAG THIS ANSWER";
+    dom.difficultyDots.textContent = "";
+    dom.difficultyNote.textContent = "";
+    dom.rateRow.querySelectorAll(".btn--rate").forEach((b) => b.classList.remove("is-on"));
     clearError();
     renderKeys();
     setStatus("LOADING …");
 
-    const pool = poolFor(dom.tier.value);
+    const pool = currentPool();
     const puzzle = pickRandom(pool);
     if (!puzzle) {
       showError("NO PUZZLES IN THIS POOL.", "Pick another setting.");
@@ -402,7 +426,10 @@
     dom.attribution.textContent =
       `Audio: “${puzzle.title}” by ${puzzle.artist} — licensed ${puzzle.license}. ` +
       `Source: Free Music Archive. Key annotations: fma_keys (FMAK).`;
-    dom.tierReadout.textContent = (puzzle.difficulty || "").toUpperCase();
+    // Genre is a filter and may be shown freely; DIFFICULTY MAY NOT — see the
+    // anchoring note on the rating control.
+    dom.genreReadout.textContent = String(puzzle.genre || "").toUpperCase();
+    renderDifficulty();   // shown from the start, per the user's call
     setStatus("PRESS PLAY TO START");
 
     const url = audioUrl(puzzle);
@@ -488,6 +515,48 @@
     setStatus(bucket === "exact" ? "LOCKED IT" : "NOT QUITE — TRY THE NEXT ONE");
   }
 
+  /**
+   * Show the difficulty on the readout, from the moment a puzzle loads.
+   *
+   * The spec originally hid this until the player had rated, to stop them
+   * anchoring on the algorithm's answer. **The user overrode that deliberately**
+   * (2026-08-16): they want the rating visible from the start and judged the
+   * anchoring risk not worth the friction. The cost is real and worth stating
+   * where it will be read: ratings given after seeing the number partly echo it,
+   * so they are weaker evidence for correcting the algorithm than blind ratings
+   * would be. That is a data-quality tradeoff the user chose, not an oversight.
+   *
+   * `prior` is what the algorithm computed; `displayed` is that prior shrunk
+   * toward player votes. Both are shown, because collapsing them into one number
+   * would destroy the ability to audit the thing this loop exists to check.
+   */
+  function renderDifficulty() {
+    if (!state.puzzle) return;
+    const prior = Number(state.puzzle.difficulty);
+    const info = window.TTRatings.rating(state.puzzle.id, prior);
+
+    dom.difficultyDots.textContent = "";
+    for (let i = 1; i <= 3; i += 1) {
+      const dot = document.createElement("i");
+      dot.dataset.filled = String(i <= info.displayed);
+      dom.difficultyDots.appendChild(dot);
+    }
+    dom.difficultyNote.textContent = info.n
+      ? `computed ${info.prior} · ${info.n} player rating${info.n === 1 ? "" : "s"}`
+      : `computed ${info.prior}`;
+  }
+
+  /** Rating is optional and never blocks anything; NEXT works rated or not. */
+  function rateCurrent(value) {
+    if (!state.puzzle || !state.answered || state.rated) return;
+    window.TTRatings.record(state.puzzle.id, value, { prior: Number(state.puzzle.difficulty) });
+    state.rated = true;
+    dom.rateRow.querySelectorAll(".btn--rate").forEach((b) => {
+      b.classList.toggle("is-on", Number(b.dataset.rating) === Number(value));
+    });
+    renderDifficulty();   // refresh the note: this vote now counts toward it
+  }
+
   async function flagAnswer() {
     if (!state.lastGuess || !state.config || !state.config.api) return;
     dom.flag.disabled = true;
@@ -559,9 +628,18 @@
   });
 
   dom.check.addEventListener("click", submitGuess);
+  // Manual advance, deliberately. The result panel persists until the player
+  // moves on: they need time to hear what they got wrong, and that pause is
+  // where the rating control lives.
   dom.next.addEventListener("click", () => { loadPuzzle(); });
   dom.flag.addEventListener("click", flagAnswer);
-  dom.tier.addEventListener("change", () => { loadPuzzle(); });
+  dom.genre.addEventListener("change", () => { loadPuzzle(); });
+  dom.level.addEventListener("change", () => { loadPuzzle(); });
+
+  dom.rateRow.addEventListener("click", (event) => {
+    const button = event.target.closest(".btn--rate");
+    if (button) rateCurrent(Number(button.dataset.rating));
+  });
 
   [dom.mixClip, dom.mixDrone].forEach((slider) => {
     slider.addEventListener("input", () => {
@@ -598,8 +676,12 @@
       committedPc: state.committedPc,
       mode: state.mode,
       answered: state.answered,
+      rated: state.rated,
       puzzleId: state.puzzle ? state.puzzle.id : null,
+      puzzleGenre: state.puzzle ? state.puzzle.genre : null,
+      puzzleDifficulty: state.puzzle ? state.puzzle.difficulty : null,
       poolSize: state.entries.length,
+      filteredPoolSize: state.entries.length ? currentPool().length : 0,
       stats: JSON.parse(JSON.stringify(state.stats)),
       sameContextForClipAndDrone:
         Boolean(audio.ctx) &&

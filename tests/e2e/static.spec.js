@@ -108,29 +108,36 @@ test("a rate-limited response is named as such", async ({ page }) => {
   await expect(page.locator("#error")).toContainText("rate limit");
 });
 
-test("the pool selector still turns untagged off", async ({ page }) => {
+/* REMOVAL-OK: "the pool selector still turns untagged off" tested the tier
+ * scheme's single pool selector. Tiers are gone — they claimed a difficulty
+ * ranking that measurement inverted — and `untagged` is now the genre
+ * `Ungenred`. The capability it guarded (excluding ungenred tracks) survives as
+ * a genre selection, which is what this asserts.
+ */
+test("the genre filter narrows the corpus, and ungenred is part of the default", async ({ page }) => {
   await page.goto("/");
   await waitForPuzzle(page);
 
-  const tiers = await page.evaluate(async () => {
+  const genres = await page.evaluate(async () => {
     const seen = new Set();
-    for (let i = 0; i < 40; i += 1) {
+    for (let i = 0; i < 60; i += 1) {
       await window.__tt.reload();
-      seen.add(document.getElementById("tier-readout").textContent);
+      seen.add(window.__tt.getState().puzzleGenre);
     }
     return [...seen];
   });
-  expect(tiers.some((t) => t === "UNTAGGED")).toBe(true);
+  expect(genres).toContain("Ungenred");
+  expect(genres.length).toBeGreaterThan(1);
 
-  await page.selectOption("#tier-select", "tagged");
+  await page.selectOption("#genre-select", "Rock");
   await waitForPuzzle(page);
-  const taggedOnly = await page.evaluate(async () => {
+  const rockOnly = await page.evaluate(async () => {
     const seen = new Set();
-    for (let i = 0; i < 40; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       await window.__tt.reload();
-      seen.add(document.getElementById("tier-readout").textContent);
+      seen.add(window.__tt.getState().puzzleGenre);
     }
     return [...seen];
   });
-  expect(taggedOnly).not.toContain("UNTAGGED");
+  expect(rockOnly).toEqual(["Rock"]);
 });

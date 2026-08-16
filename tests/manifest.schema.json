@@ -16,7 +16,7 @@
       "artist",
       "license",
       "license_canonical",
-      "genre_top",
+      "genre",
       "difficulty"
     ],
     "properties": {
@@ -29,8 +29,8 @@
       "artist": { "type": "string", "minLength": 1 },
       "license": { "type": "string", "minLength": 1 },
       "license_canonical": { "type": "string", "minLength": 1 },
-      "genre_top": { "type": ["string", "null"] },
-      "difficulty": { "type": "string", "enum": ["tier1", "tier2", "tier3", "untagged"] }
+      "genre": { "type": "string", "minLength": 1 },
+      "difficulty": { "type": "integer", "enum": [1, 2, 3] }
     }
   }
 }

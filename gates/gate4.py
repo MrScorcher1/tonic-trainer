@@ -37,7 +37,7 @@ from tonic_trainer.manifest import (  # noqa: E402
 )
 
 SCHEMA = ROOT / "tests" / "manifest.schema.json"
-MIN_TIER1 = 200
+MIN_PER_LEVEL = 200
 FAILURES: list[str] = []
 
 
@@ -76,10 +76,19 @@ def main() -> int:
     nd_token = [e["id"] for e in entries if re.search(r"\bnd\b", e["license"], re.IGNORECASE)]
     check("no license string contains a standalone 'ND' token", not nd_token, f"{len(nd_token)}")
 
-    tiers: dict[str, int] = {}
+    # The old "tier1 >= 200" check has no meaning now that difficulty is computed
+    # per song. Terciles make >= 200 per level true by construction, so a failure
+    # here means the binning is broken — which is exactly what a gate should catch.
+    levels: dict[int, int] = {}
     for e in entries:
-        tiers[e["difficulty"]] = tiers.get(e["difficulty"], 0) + 1
-    check(f"tier1 has >= {MIN_TIER1} entries", tiers.get("tier1", 0) >= MIN_TIER1, str(tiers.get("tier1", 0)))
+        levels[e["difficulty"]] = levels.get(e["difficulty"], 0) + 1
+    for level in (1, 2, 3):
+        check(f"difficulty {level} has >= {MIN_PER_LEVEL} entries",
+              levels.get(level, 0) >= MIN_PER_LEVEL, str(levels.get(level, 0)))
+    check("no entry retains a tier label",
+          not any(str(e["difficulty"]).startswith(("tier", "untagged")) for e in entries))
+    blank_genre = [e["id"] for e in entries if not str(e.get("genre", "")).strip()]
+    check("every entry has a non-empty genre", not blank_genre, f"{len(blank_genre)}")
 
     ids = [e["id"] for e in entries]
     check("puzzle ids are unique", len(set(ids)) == len(ids), f"{len(ids) - len(set(ids))} duplicates")
@@ -91,11 +100,11 @@ def main() -> int:
           top_share <= MAX_KEY_SHARE, f"{dist.index[0]} at {top_share:.1%}")
 
     print()
-    print("tier counts:")
-    for tier in ("tier1", "tier2", "tier3", "untagged"):
-        print(f"  {tier:<10} {tiers.get(tier, 0)}")
+    print("difficulty counts:")
+    for level in (1, 2, 3):
+        print(f"  difficulty {level}: {levels.get(level, 0)}")
     print()
-    print(f"served pool (tier1+tier2+tier3): {len(pool)}")
+    print(f"served pool (whole corpus): {len(pool)}")
     print("key distribution across the served pool:")
     for label, n in dist.items():
         print(f"  {label:<12} {n:>5}  {n / len(pool):6.1%}")

@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 
-from .manifest import DEFAULT_POOL, load_manifest, served_pool
+from .manifest import load_manifest
 from .paths import ROOT
 
 DOCS = ROOT / "docs"
@@ -39,6 +40,10 @@ ANSWER_FIELDS = ("tonic_pc", "mode", "key_display")
 HF_AUDIO_BASE = (
     "https://huggingface.co/datasets/MrScorcher1/tonic-trainer/resolve/main/clips"
 )
+# Set once the Cloudflare Worker is deployed (TT_RATINGS_ENDPOINT at build time).
+RATINGS_ENDPOINT = os.environ.get("TT_RATINGS_ENDPOINT", "")
+PRIOR_WEIGHT = 5
+RATINGS_BATCH_SIZE = 10
 
 
 def verifier(puzzle_id: str, tonic_pc: int, mode: str) -> str:
@@ -55,10 +60,12 @@ def public_entry(entry: dict) -> dict:
     return public
 
 
-def build(pool: tuple[str, ...] = DEFAULT_POOL) -> dict:
-    entries = served_pool(load_manifest(), pool)
+def build() -> dict:
+    # The whole corpus ships; genre and difficulty are filters the player applies
+    # in the page, not build-time pool decisions.
+    entries = load_manifest()
     if not entries:
-        raise ValueError("no entries in the served pool — nothing to publish")
+        raise ValueError("the manifest is empty — nothing to publish")
 
     DOCS.mkdir(parents=True, exist_ok=True)
     if ANSWERS_DIR.exists():
@@ -78,6 +85,22 @@ def build(pool: tuple[str, ...] = DEFAULT_POOL) -> dict:
     CONFIG_JSON.write_text(json.dumps({
         "audio_base": HF_AUDIO_BASE,
         "api": False,
+        # Empty until the Cloudflare Worker exists. The client treats an absent
+        # endpoint exactly like an unreachable one — it plays on with the
+        # algorithmic difficulty — so the app works before, during and after the
+        # ratings service exists.
+        "ratings_endpoint": RATINGS_ENDPOINT,
+        # Prior weight in pseudo-votes for the Bayesian shrinkage. At w=5 one
+        # vote barely moves the rating, five match the algorithm, twenty
+        # essentially override it. THIS IS A REASONED GUESS, NOT A TUNED
+        # PARAMETER: it cannot be calibrated until votes exist. Do not present
+        # it as validated.
+        "ratings_prior_weight": PRIOR_WEIGHT,
+        # Cloudflare's KV free tier allows 100,000 reads but only 1,000 WRITES
+        # per day. One write per vote would cap the app at 1000 ratings a day
+        # and then fail hard, so votes are batched: ~10 per write turns that cap
+        # into ~10,000 ratings a day.
+        "ratings_batch_size": RATINGS_BATCH_SIZE,
         "note": "Static build. audio_base must stay the resolve/ URL — what it "
                 "redirects to is signed and expires.",
     }, indent=1))
@@ -86,7 +109,9 @@ def build(pool: tuple[str, ...] = DEFAULT_POOL) -> dict:
         "entries": len(public),
         "answer_files": len(list(ANSWERS_DIR.glob("*.json"))),
         "manifest_bytes": STATIC_MANIFEST.stat().st_size,
-        "pool": list(pool),
+        "difficulty_counts": {
+            level: sum(1 for e in entries if e["difficulty"] == level) for level in (1, 2, 3)
+        },
     }
     print(f"manifest : {report['entries']} entries, "
           f"{report['manifest_bytes'] / 1e6:.2f} MB uncompressed -> {STATIC_MANIFEST}")

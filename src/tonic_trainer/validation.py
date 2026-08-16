@@ -65,6 +65,26 @@ def chroma_vector(path: str) -> np.ndarray:
     return vector
 
 
+def key_correlations(vector: np.ndarray) -> dict[tuple[int, str], float]:
+    """Correlation of a chroma vector against all 24 rotated key profiles.
+
+    Shared by key estimation and by the difficulty margins, so the two cannot
+    disagree about what "the correlation at this key" means.
+    """
+    v = vector - vector.mean()
+    denom_v = np.linalg.norm(v)
+    if denom_v == 0:
+        raise ValueError("chroma vector is flat — no tonal information")
+
+    out: dict[tuple[int, str], float] = {}
+    for mode, profile in (("major", KK_MAJOR), ("minor", KK_MINOR)):
+        for pc in range(12):
+            rotated = np.roll(profile, pc)
+            p = rotated - rotated.mean()
+            out[(pc, mode)] = float(np.dot(v, p) / (denom_v * np.linalg.norm(p)))
+    return out
+
+
 def estimate_key(vector: np.ndarray) -> tuple[int, str]:
     """Krumhansl-Schmuckler: correlate the chroma against all 24 rotated profiles."""
     v = vector - vector.mean()

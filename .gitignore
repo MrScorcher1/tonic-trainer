@@ -32,3 +32,4 @@ SPEC.md
 package-lock.json
 DEPLOY.md
 DIFFICULTY.md
+.wrangler-config/

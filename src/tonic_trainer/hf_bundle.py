@@ -220,10 +220,11 @@ def build(*, confirm: bool) -> dict:
 
     with (BUNDLE / "attribution.csv").open("w", newline="") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["id", "file", "title", "artist", "license", "license_canonical", "genre"])
+        writer.writerow(["id", "file", "title", "artist", "license", "license_canonical",
+                         "genre", "difficulty"])
         for e, _p in files:
             writer.writerow([e["id"], f"clips/{e['audio_path']}", e["title"], e["artist"],
-                             e["license"], e["license_canonical"], e["genre_top"] or ""])
+                             e["license"], e["license_canonical"], e["genre"]])
 
     (BUNDLE / "puzzles_public.json").write_text(json.dumps(public_entries(entries), indent=1))
     (BUNDLE / "README.md").write_text(dataset_card(entries, conflicts))

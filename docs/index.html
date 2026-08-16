@@ -37,9 +37,14 @@
         <span class="screen__label">LICENSE</span>
         <span class="screen__value screen__value--small" id="track-license">—</span>
       </div>
+      <div class="screen__row screen__row--meta">
+        <span class="screen__label">DIFFICULTY</span>
+        <span class="dots" id="difficulty-dots" aria-label="computed difficulty"></span>
+        <span class="dots__note" id="difficulty-note"></span>
+      </div>
       <div class="screen__bar">
         <span id="status-line">PRESS PLAY TO START</span>
-        <span id="tier-readout">TIER 1</span>
+        <span id="genre-readout">—</span>
       </div>
     </div>
   </section>
@@ -54,14 +59,18 @@
       </button>
       <button class="btn btn--toggle is-on" id="btn-loop" type="button" aria-pressed="true">LOOP</button>
       <label class="select">
-        <span>POOL</span>
-        <select id="tier-select">
-          <option value="any" selected>WHOLE CORPUS</option>
-          <option value="tagged">GENRE&#8209;LABELLED ONLY</option>
-          <option value="tier1">TIER 1 · major, song genres</option>
-          <option value="tier2">TIER 2 · minor, song genres</option>
-          <option value="tier3">TIER 3 · other genres</option>
-          <option value="untagged">UNTAGGED · no genre</option>
+        <span>GENRE</span>
+        <select id="genre-select">
+          <option value="any" selected>ALL GENRES</option>
+        </select>
+      </label>
+      <label class="select">
+        <span>DIFFICULTY</span>
+        <select id="difficulty-select">
+          <option value="any" selected>ANY</option>
+          <option value="1">1 · clearest</option>
+          <option value="2">2</option>
+          <option value="3">3 · murkiest</option>
         </select>
       </label>
     </div>
@@ -107,7 +116,19 @@
       <span class="result__key" id="result-key">—</span>
     </div>
     <p class="result__text" id="result-text"></p>
-    <button class="btn btn--ghost btn--flag" id="btn-flag" type="button">FLAG THIS ANSWER</button>
+
+    <!-- Optional and off to the side: rating is never required to move on, and
+         the difficulty is on the readout from the start (the user's call —
+         see the anchoring note in app.js). -->
+    <div class="rate" id="rate-row">
+      <span class="rate__label">RATE THIS ONE? <em>optional</em></span>
+      <div class="rate__buttons" role="group" aria-label="Rate this clip">
+        <button class="btn btn--rate" data-rating="1" type="button">1</button>
+        <button class="btn btn--rate" data-rating="2" type="button">2</button>
+        <button class="btn btn--rate" data-rating="3" type="button">3</button>
+      </div>
+      <button class="btn btn--ghost btn--flag" id="btn-flag" type="button">FLAG THIS ANSWER</button>
+    </div>
   </section>
 
   <section class="stats">
@@ -122,6 +143,7 @@
   </footer>
 </main>
 <script src="scoring.js"></script>
+<script src="ratings.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

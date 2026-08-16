@@ -26,33 +26,42 @@ def test_puzzle_carries_attribution_and_audio(client):
     assert body["audio_url"].startswith("/audio/")
 
 
-def test_tier_filter(client, manifest):
-    body = client.get("/api/puzzle", params={"tier": "tier1"}).json()
+def test_genre_and_difficulty_filters_are_independent(client, manifest):
+    body = client.get("/api/puzzle", params={"genre": "Rock"}).json()
+    assert next(e for e in manifest if e["id"] == body["id"])["genre"] == "Rock"
+
+    body = client.get("/api/puzzle", params={"difficulty": 2}).json()
+    assert next(e for e in manifest if e["id"] == body["id"])["difficulty"] == 2
+
+    body = client.get("/api/puzzle", params={"genre": "Rock", "difficulty": 1}).json()
     entry = next(e for e in manifest if e["id"] == body["id"])
-    assert entry["difficulty"] == "tier1"
-    assert client.get("/api/puzzle", params={"tier": "nope"}).status_code == 404
+    assert (entry["genre"], entry["difficulty"]) == ("Rock", 1)
 
 
-# REMOVAL-OK: test_untagged_is_not_in_the_default_pool asserted the opposite of
-# the behaviour the user chose after the measurement. It is inverted below rather
-# than deleted, and `test_tagged_filter_turns_untagged_back_off` now covers the
-# exclusion path it used to guard.
-def test_untagged_is_in_the_default_pool(client, manifest):
-    # The default changed once the premise behind excluding untagged was
-    # measured and failed — see the note on DEFAULT_POOL in manifest.py.
+def test_unknown_filters_are_rejected_rather_than_silently_ignored(client):
+    assert client.get("/api/puzzle", params={"genre": "Polka"}).status_code == 404
+    assert client.get("/api/puzzle", params={"difficulty": 9}).status_code == 422
+
+
+# REMOVAL-OK: the untagged/tagged pool tests covered a scheme that no longer
+# exists — `untagged` was a difficulty value, and difficulty is now a computed
+# 1-3 with genre as a separate field. The default (whole corpus) and the filter
+# that narrows it are covered by the two tests below and by
+# test_genre_and_difficulty_filters_are_independent.
+def test_the_default_pool_is_the_whole_corpus(client, manifest):
     by_id = {e["id"]: e for e in manifest}
-    seen = {by_id[client.get("/api/puzzle").json()["id"]]["difficulty"] for _ in range(120)}
-    assert "untagged" in seen
+    seen = {by_id[client.get("/api/puzzle").json()["id"]]["genre"] for _ in range(150)}
+    assert "Ungenred" in seen, "ungenred tracks are part of the default corpus"
+    assert len(seen) > 1
 
 
-def test_tagged_filter_turns_untagged_back_off(client, manifest):
+def test_ungenred_can_still_be_excluded_with_a_genre_filter(client, manifest):
     by_id = {e["id"]: e for e in manifest}
     seen = {
-        by_id[client.get("/api/puzzle", params={"tier": "tagged"}).json()["id"]]["difficulty"]
-        for _ in range(120)
+        by_id[client.get("/api/puzzle", params={"genre": "Rock"}).json()["id"]]["genre"]
+        for _ in range(60)
     }
-    assert "untagged" not in seen
-    assert seen <= {"tier1", "tier2", "tier3"}
+    assert seen == {"Rock"}
 
 
 def test_correct_answer_scores_correct(client, manifest):

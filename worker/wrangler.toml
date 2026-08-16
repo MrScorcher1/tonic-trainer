@@ -1,0 +1,14 @@
+name = "tonic-trainer"
+main = "src/index.js"
+compatibility_date = "2026-08-16"
+
+# The KV namespace holds one aggregate object plus short-lived rate-limit
+# counters. Create it with:
+#
+#   npx wrangler kv namespace create RATINGS
+#
+# and paste the id it prints below, replacing the placeholder. The command
+# prints the exact TOML block to copy.
+[[kv_namespaces]]
+binding = "RATINGS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

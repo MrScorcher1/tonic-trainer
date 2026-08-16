@@ -15,7 +15,7 @@ import pytest
 
 from tonic_trainer.normalize import display_label
 
-GENRES = ["Rock", "Folk", "Pop", "Electronic", None]
+GENRES = ["Rock", "Folk", "Pop", "Electronic", "Ungenred"]
 
 
 @pytest.fixture(scope="session")
@@ -44,12 +44,7 @@ def manifest(clip_dir) -> list[dict]:
         pc = i % 12
         mode = "major" if i % 2 == 0 else "minor"
         genre = GENRES[i % len(GENRES)]
-        if genre is None:
-            difficulty = "untagged"
-        elif genre in ("Rock", "Folk", "Pop"):
-            difficulty = "tier1" if mode == "major" else "tier2"
-        else:
-            difficulty = "tier3"
+        difficulty = (i % 3) + 1     # computed per song upstream; 1/2/3 here
         entries.append(
             {
                 "id": f"fma-{i:06d}",
@@ -61,7 +56,7 @@ def manifest(clip_dir) -> list[dict]:
                 "artist": f"Test Artist {i % 7}",
                 "license": "CC BY-SA 4.0",
                 "license_canonical": "CC BY-SA",
-                "genre_top": genre,
+                "genre": genre,
                 "difficulty": difficulty,
             }
         )

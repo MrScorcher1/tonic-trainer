@@ -43,7 +43,28 @@ LEAK_WORDS = re.compile(r"tonic_pc|mode|key_display", re.IGNORECASE)
 # apparent note letter is the tail of another word.
 KEY_NAME_IN_TEXT = re.compile(r"\b[A-G][#b]?\s+(major|minor)\b", re.IGNORECASE)
 
-TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
+UNGENRED = "Ungenred"
+MAX_KEY_SHARE = 0.25
+
+# The tier scheme is gone. It claimed a difficulty ranking that measurement
+# refuted — tier1 (Rock/Folk/Pop/Blues/Country, the "tonally plainest" set)
+# scored WORST on estimator agreement at 45.9%, below tier3's 49.9% and
+# untagged's 51.5%. The prior did not merely fail to predict difficulty, it
+# inverted. The concept is now split into two fields that each mean what they
+# say: `genre` is a filter (what it always was) and `difficulty` is an integer
+# 1-3 computed per song from the audio (difficulty.py). This is an API break;
+# the only consumer is this app.
+
+
+def genre_label(genre_top: object) -> str:
+    """The real genre, or `Ungenred` — never a euphemism, never blank."""
+    if genre_top is None or (isinstance(genre_top, float) and pd.isna(genre_top)):
+        return UNGENRED
+    text = str(genre_top).strip()
+    return text or UNGENRED
+
+
+_OLD_TIER_SCHEME_REMOVED = """
 
 # `untagged` was originally excluded from the default pool on the spec's claim
 # that those tracks "skew experimental/ambient and may have no audible tonal
@@ -66,20 +87,7 @@ TIER1_GENRES = frozenset({"Rock", "Folk", "Pop", "Blues", "Country"})
 # a track that is itself a drone defeats the exercise. A listening test on the
 # untagged pool has NOT been performed. A future reader should assume it is
 # still open rather than that it was done and passed.
-DEFAULT_POOL = ("tier1", "tier2", "tier3", "untagged")
-TAGGED_POOL = ("tier1", "tier2", "tier3")  # `tier=tagged` turns untagged back off
-MAX_KEY_SHARE = 0.25
-
-
-def assign_tier(genre_top: object, mode: str) -> str:
-    if genre_top is None or (isinstance(genre_top, float) and pd.isna(genre_top)):
-        return "untagged"
-    genre = str(genre_top).strip()
-    if not genre:
-        return "untagged"
-    if genre in TIER1_GENRES:
-        return "tier1" if mode == "major" else "tier2"
-    return "tier3"
+"""  # end of the removed tier scheme — kept as the record of why it went
 
 
 def puzzle_id(track_id: int) -> str:
@@ -87,7 +95,11 @@ def puzzle_id(track_id: int) -> str:
 
 
 def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dict]:
-    """Rows that are usable *and* have a derived clip become puzzles."""
+    """Rows that are usable *and* have a derived clip become puzzles.
+
+    Entries come out WITHOUT `difficulty`: it is computed from the audio, and
+    the computation needs this list first. `attach_difficulty` adds it.
+    """
     entries: list[dict] = []
     leak_dropped: list[int] = []
     for row in joined.itertuples(index=False):
@@ -106,22 +118,19 @@ def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dic
         license_str = str(row.license).strip()
         if not title or not artist or not license_str:
             raise ValueError(f"track {row.track_id} reached the manifest without attribution")
-        genre = None if pd.isna(row.genre_top) else str(row.genre_top)
-        entries.append(
-            {
-                "id": puzzle_id(row.track_id),
-                "audio_path": rel,
-                "tonic_pc": int(row.tonic_pc),
-                "mode": str(row.mode),
-                "key_display": str(row.key_label_display),
-                "title": title,
-                "artist": artist,
-                "license": license_str,
-                "license_canonical": str(row.license_canonical),
-                "genre_top": genre,
-                "difficulty": assign_tier(row.genre_top, str(row.mode)),
-            }
-        )
+        entry = {
+            "id": puzzle_id(row.track_id),
+            "audio_path": rel,
+            "tonic_pc": int(row.tonic_pc),
+            "mode": str(row.mode),
+            "key_display": str(row.key_label_display),
+            "title": title,
+            "artist": artist,
+            "license": license_str,
+            "license_canonical": str(row.license_canonical),
+            "genre": genre_label(row.genre_top),
+        }
+        entries.append(entry)
     if leak_dropped:
         print(f"dropped {len(leak_dropped)} tracks whose attribution contains a leak-check "
               f"substring (see LEAK_WORDS): {leak_dropped[:6]}")
@@ -130,9 +139,60 @@ def build_manifest(joined: pd.DataFrame, clip_paths: dict[int, str]) -> list[dic
     return entries
 
 
-def served_pool(entries: Iterable[dict], tiers: Iterable[str] = DEFAULT_POOL) -> list[dict]:
-    wanted = set(tiers)
-    return [e for e in entries if e["difficulty"] in wanted]
+def base_entries() -> list[dict]:
+    """Every servable puzzle, minus the computed difficulty.
+
+    Shared by the difficulty computation (which needs the list before the
+    ratings exist) and by the manifest build (which then attaches them), so the
+    two cannot disagree about which clips are in the corpus.
+    """
+    from .phase2 import JOINED_PARQUET
+
+    joined = pd.read_parquet(JOINED_PARQUET)
+    # Tracks the licence cross-check found ND evidence for stay out on a rebuild
+    # too — otherwise re-running would quietly re-admit them.
+    nd_path = BUILD / "nd_excluded.json"
+    nd_excluded = set(json.loads(nd_path.read_text())) if nd_path.exists() else set()
+    if nd_excluded:
+        print(f"licence cross-check excludes {len(nd_excluded)} ND-flagged tracks")
+
+    clip_paths = {}
+    for path in CLIP_ROOT.rglob("*.mp3"):
+        if path.stat().st_size > 0:
+            clip_paths[int(path.stem)] = str(path.relative_to(CLIP_ROOT))
+    print(f"clips on disk: {len(clip_paths)}")
+
+    return [e for e in build_manifest(joined, clip_paths) if e["id"] not in nd_excluded]
+
+
+def attach_difficulty(entries: list[dict], ratings: dict[str, int]) -> list[dict]:
+    """Add the computed difficulty, refusing to publish an entry without one."""
+    missing = [e["id"] for e in entries if e["id"] not in ratings]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} entries have a clip but no computed difficulty "
+            f"(first: {missing[:5]}) — run `python -m tonic_trainer.difficulty` "
+            "after the clip set changes"
+        )
+    return [{**e, "difficulty": int(ratings[e["id"]])} for e in entries]
+
+
+def served_pool(entries: Iterable[dict], genres: Iterable[str] | None = None,
+                levels: Iterable[int] | None = None) -> list[dict]:
+    """Filter by genre and/or difficulty. The default is the whole corpus.
+
+    Genre and difficulty are independent filters now, so the old
+    "whole corpus / genre-labelled only" behaviour is just a genre selection —
+    no capability was lost when the pools went away.
+    """
+    out = list(entries)
+    if genres is not None:
+        wanted = set(genres)
+        out = [e for e in out if e["genre"] in wanted]
+    if levels is not None:
+        keep = {int(level) for level in levels}
+        out = [e for e in out if int(e["difficulty"]) in keep]
+    return out
 
 
 def key_distribution(entries: Iterable[dict]) -> pd.Series:
@@ -151,32 +211,29 @@ def load_manifest() -> list[dict]:
 
 
 def build() -> list[dict]:
-    from .phase2 import JOINED_PARQUET
+    from .difficulty import DIFFICULTY_JSON
 
-    joined = pd.read_parquet(JOINED_PARQUET)
-    # Tracks the licence cross-check found ND evidence for stay out on a rebuild
-    # too — otherwise re-running this phase would quietly re-admit them.
-    nd_excluded_path = BUILD / "nd_excluded.json"
-    nd_excluded = set(json.loads(nd_excluded_path.read_text())) if nd_excluded_path.exists() else set()
-    if nd_excluded:
-        print(f"licence cross-check excludes {len(nd_excluded)} ND-flagged tracks")
-    clip_paths = {}
-    for path in CLIP_ROOT.rglob("*.mp3"):
-        if path.stat().st_size > 0:
-            clip_paths[int(path.stem)] = str(path.relative_to(CLIP_ROOT))
-    print(f"clips on disk: {len(clip_paths)}")
+    if not DIFFICULTY_JSON.exists():
+        raise FileNotFoundError(
+            f"{DIFFICULTY_JSON} missing — difficulty is computed from the audio, so run "
+            "`python -m tonic_trainer.difficulty` before building the manifest"
+        )
+    ratings = json.loads(DIFFICULTY_JSON.read_text())["ratings"]
 
-    entries = [e for e in build_manifest(joined, clip_paths) if e["id"] not in nd_excluded]
+    entries = attach_difficulty(base_entries(), ratings)
     write_manifest(entries)
 
-    tiers = pd.Series([e["difficulty"] for e in entries]).value_counts()
+    levels = pd.Series([e["difficulty"] for e in entries]).value_counts().sort_index()
     print(f"manifest entries: {len(entries)}")
-    for tier, n in tiers.items():
-        print(f"  {tier:<10} {n}")
+    for level, n in levels.items():
+        print(f"  difficulty {level}: {n}")
+    genres = pd.Series([e["genre"] for e in entries]).value_counts()
+    print(f"genres: {len(genres)} distinct, top — " +
+          ", ".join(f"{g} {n}" for g, n in genres.head(5).items()))
 
     pool = served_pool(entries)
     dist = key_distribution(pool)
-    print(f"\nserved pool (excludes untagged): {len(pool)}")
+    print(f"\nserved pool (the whole corpus): {len(pool)}")
     print("key distribution (top 10):")
     for label, n in dist.head(10).items():
         print(f"  {label:<12} {n:>5}  {n / len(pool):.1%}")

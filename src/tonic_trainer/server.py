@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .clips import CLIP_ROOT
-from .manifest import DEFAULT_POOL, TAGGED_POOL, load_manifest
+from .manifest import load_manifest, served_pool
 from .paths import BUILD, WEB
 from .scoring import classify, explain
 
@@ -151,7 +151,9 @@ def _puzzle_payload(entry: dict, prefix: str, audio_base: str = "") -> dict:
         "title": entry["title"],
         "artist": entry["artist"],
         "license": entry["license"],
-        "genre": entry["genre_top"],
+        "genre": entry["genre"],
+        # The computed difficulty travels with the puzzle; hiding it until the
+        # player has rated is the PAGE's job (see the anchoring note in app.js).
         "difficulty": entry["difficulty"],
     }
 
@@ -247,13 +249,8 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
     # talks to the remote host.
     payload_base = "" if audio_proxy else audio_base
     by_id = {e["id"]: e for e in entries}
-    by_tier: dict[str, list[dict]] = {}
-    for e in entries:
-        by_tier.setdefault(e["difficulty"], []).append(e)
-    default_pool = [e for e in entries if e["difficulty"] in DEFAULT_POOL]
-    tagged_pool = [e for e in entries if e["difficulty"] in TAGGED_POOL]
-    if not default_pool:
-        raise ValueError("no puzzles in the default serving pool")
+    if not entries:
+        raise ValueError("no puzzles to serve")
 
     prefix = f"/{token}" if token else ""
     app = FastAPI(title="Tonic Trainer", docs_url=None, redoc_url=None)
@@ -264,18 +261,23 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
     router = APIRouter()
 
     @router.get("/api/puzzle")
-    def get_puzzle(tier: str | None = None) -> JSONResponse:
-        if tier in (None, "", "any", "default"):
-            pool = default_pool
-        elif tier == "tagged":
-            # The default now includes untagged; this is how it is turned off.
-            pool = tagged_pool
-        elif tier in by_tier:
-            pool = by_tier[tier]
-        else:
-            raise HTTPException(status_code=404, detail=f"unknown tier {tier!r}")
+    def get_puzzle(genre: str | None = None, difficulty: int | None = None) -> JSONResponse:
+        """Genre and difficulty are independent filters; the default is everything.
+
+        The `tier=` parameter is gone with the tier scheme it named. This is an
+        API break; the only consumer is this app.
+        """
+        if difficulty is not None and difficulty not in (1, 2, 3):
+            raise HTTPException(status_code=422, detail="difficulty must be 1, 2 or 3")
+        pool = served_pool(
+            entries,
+            genres=[genre] if genre and genre != "any" else None,
+            levels=[difficulty] if difficulty is not None else None,
+        )
         if not pool:
-            raise HTTPException(status_code=404, detail=f"no puzzles in tier {tier!r}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"no puzzles with genre={genre!r} difficulty={difficulty!r}")
         # secrets.choice, not random.choice: no seeded sequence to predict, and
         # nothing about the previous call is remembered.
         return JSONResponse(_puzzle_payload(secrets.choice(pool), prefix, payload_base))
@@ -352,7 +354,7 @@ def create_app(entries: list[dict] | None = None, *, token: str | None = None,
 
     @router.get("/api/health")
     def health() -> JSONResponse:
-        return JSONResponse({"ok": True, "puzzles": len(entries), "pool": len(default_pool)})
+        return JSONResponse({"ok": True, "puzzles": len(entries), "pool": len(entries)})
 
     app.include_router(router, prefix=prefix)
     app.mount(prefix or "/", StaticFiles(directory=str(WEB), html=True), name="web")

@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tonic_trainer.manifest import DEFAULT_POOL, load_manifest, served_pool  # noqa: E402
+from tonic_trainer.manifest import load_manifest  # noqa: E402
 from tonic_trainer.static_build import (  # noqa: E402
     ANSWER_FIELDS,
     ANSWERS_DIR,
@@ -74,7 +74,7 @@ def main() -> int:
         print(f"GATE S1 FAILED: {STATIC_MANIFEST} missing — run static_build first")
         return 1
 
-    source = served_pool(load_manifest(), DEFAULT_POOL)
+    source = load_manifest()   # the whole corpus ships; filters are applied in the page
     raw = STATIC_MANIFEST.read_text()
     public = json.loads(raw)
 
