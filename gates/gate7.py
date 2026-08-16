@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -78,6 +79,17 @@ def main() -> int:
         clips = list((BUNDLE / "clips").rglob("*.mp3")) if (BUNDLE / "clips").exists() else []
         check("attribution.csv has one row per clip", len(rows) - 1 == len(clips),
               f"{len(rows) - 1} rows vs {len(clips)} clips")
+        # A row count alone missed a shipped defect: the header declared eight
+        # columns while every row wrote seven, so `difficulty` read as empty.
+        with (BUNDLE / "attribution.csv").open(newline="") as fh:
+            parsed = list(csv.reader(fh))
+        header, data = parsed[0], parsed[1:]
+        ragged = {len(r) for r in data} - {len(header)}
+        check("every attribution.csv row has as many fields as the header", not ragged,
+              f"header={len(header)} but rows have {sorted(ragged)}")
+        blank = [h for i, h in enumerate(header)
+                 if all(i >= len(r) or not r[i].strip() for r in data)]
+        check("no attribution.csv column is declared but never filled", not blank, str(blank))
 
     # A real check, not a string search: the previous version matched the
     # `hf upload` command printed inside UPLOAD.md's text and called the

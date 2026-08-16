@@ -224,7 +224,8 @@ def build(*, confirm: bool) -> dict:
                          "genre", "difficulty"])
         for e, _p in files:
             writer.writerow([e["id"], f"clips/{e['audio_path']}", e["title"], e["artist"],
-                             e["license"], e["license_canonical"], e["genre"]])
+                             e["license"], e["license_canonical"], e["genre"],
+                             e["difficulty"]])
 
     (BUNDLE / "puzzles_public.json").write_text(json.dumps(public_entries(entries), indent=1))
     (BUNDLE / "README.md").write_text(dataset_card(entries, conflicts))
