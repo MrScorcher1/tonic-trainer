@@ -100,6 +100,13 @@ test("the scored answer agrees with the published verifier", async ({ page }) =>
   const { id } = await page.evaluate(() => ({ id: window.__tt.getState().puzzleId }));
   await page.click('.key[data-pc="0"]');
   await page.click("#btn-check");
+  // A wrong guess deliberately shows no key, so resolve the puzzle before
+  // reading one — this test is about the verifier round-trip, not the reveal
+  // policy (unit.spec.js owns that).
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 1);
+  if (!(await page.evaluate(() => window.__tt.getState().resolved))) {
+    await page.click("#btn-reveal");
+  }
   await expect(page.locator("#result-key")).not.toHaveText("—");
 
   const shown = await page.locator("#result-key").innerText();

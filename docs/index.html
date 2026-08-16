@@ -39,7 +39,7 @@
       </div>
       <div class="screen__row screen__row--meta">
         <span class="screen__label">DIFFICULTY</span>
-        <span class="dots" id="difficulty-dots" aria-label="computed difficulty"></span>
+        <span class="dots" id="difficulty-dots" aria-label="difficulty"></span>
         <span class="dots__note" id="difficulty-note"></span>
       </div>
       <div class="screen__bar">
@@ -49,7 +49,6 @@
     </div>
   </section>
 
-  <p class="attribution" id="attribution">Audio: — · — · —</p>
   <p class="error" id="error" hidden></p>
 
   <section class="console">
@@ -107,6 +106,11 @@
       <button class="btn btn--mode" id="btn-minor" type="button" aria-pressed="false">MINOR</button>
     </div>
     <button class="btn btn--check" id="btn-check" type="button" disabled>CHECK</button>
+    <!-- REVEAL is never automatic. Nothing in the app may show the key except a
+         correct guess or a deliberate press of this button — that is what makes
+         "unlimited guesses" a real invitation to keep listening rather than a
+         countdown to the answer being handed over. -->
+    <button class="btn btn--reveal" id="btn-reveal" type="button">REVEAL</button>
     <button class="btn btn--ghost" id="btn-next" type="button">NEXT CLIP</button>
   </section>
 
@@ -136,6 +140,11 @@
     <div class="stats__grid" id="stats-grid"></div>
     <p class="stats__note">Session only. Nothing is stored — reload and this unit forgets you.</p>
   </section>
+
+  <!-- Below the session box, and never behind a toggle: the licences here are
+       attribution-mandatory, so this has to be readable without the player
+       doing anything. -->
+  <p class="attribution" id="attribution">Audio: — · — · —</p>
 
   <footer class="unit__foot">
     <span>Tonic Trainer · stateless · local-first</span>

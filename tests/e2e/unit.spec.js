@@ -133,29 +133,220 @@ test("the answer is not in the page before submission", async ({ page }) => {
   expect(html).not.toMatch(/key_display/);
 });
 
-test("submitting a guess renders a result panel and the attribution stays visible", async ({ page }) => {
+/** The current puzzle's answer, recovered the same way the app recovers it.
+ *  The suite needs it to construct guesses that are guaranteed WRONG — without
+ *  it a "wrong guess" test passes or fails on which clip was picked. */
+async function answerFor(page) {
+  return page.evaluate(async () => {
+    const id = window.__tt.getState().puzzleId;
+    const resp = await fetch(`answers/${id}.json`);
+    const { h } = await resp.json();
+    return window.TTScoring.recoverAnswer(id, h);
+  });
+}
+
+/** Pitch classes that cannot be the answer, so every guess made from them misses. */
+const wrongPcs = (answer, n) =>
+  [1, 2, 5, 7, 11].map((step) => (answer.tonic_pc + step) % 12).slice(0, n);
+
+test("the attribution is full, visible without interaction, and below the session box", async ({ page }) => {
   const artist = await page.locator("#track-artist").innerText();
   const license = await page.locator("#track-license").innerText();
+  const title = await page.locator("#track-title").innerText();
 
-  await page.click('.key[data-pc="4"]');
-  await page.click("#btn-check");
-  await expect(page.locator("#result")).toBeVisible();
-  await expect(page.locator("#result-key")).not.toHaveText("—");
-  await expect(page.locator("#result-text")).not.toHaveText("");
-
+  // No guess, no click, no toggle — it is readable as the page loads.
+  await expect(page.locator("#attribution")).toBeVisible();
   const attribution = await page.locator("#attribution").innerText();
   expect(attribution).toContain(artist);
   expect(attribution).toContain(license);
-  await expect(page.locator("#attribution")).toBeVisible();
+  expect(attribution).toContain(title);
+  expect(attribution).toContain("Free Music Archive");
 
-  // The answer is only allowed to appear after the guess is committed.
+  // Not behind a details/summary or any collapsed container.
+  const hidden = await page.evaluate(() => {
+    const el = document.getElementById("attribution");
+    return {
+      inDetails: Boolean(el.closest("details")),
+      display: getComputedStyle(el).display,
+      visibility: getComputedStyle(el).visibility,
+      clipped: el.scrollHeight > el.clientHeight + 1,
+    };
+  });
+  expect(hidden.inDetails).toBe(false);
+  expect(hidden.display).not.toBe("none");
+  expect(hidden.visibility).toBe("visible");
+  expect(hidden.clipped).toBe(false);
+
+  // Below the session box, in document order and on screen.
+  const order = await page.evaluate(() => {
+    const stats = document.querySelector(".stats");
+    const attr = document.getElementById("attribution");
+    return {
+      after: Boolean(
+        stats.compareDocumentPosition(attr) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      statsBottom: stats.getBoundingClientRect().bottom,
+      attrTop: attr.getBoundingClientRect().top,
+    };
+  });
+  expect(order.after).toBe(true);
+  expect(order.attrTop).toBeGreaterThanOrEqual(order.statsBottom - 1);
+});
+
+test("guessing is unlimited and a wrong guess leaks nothing", async ({ page }) => {
+  const answer = await answerFor(page);
+  const answerText = await page.evaluate(
+    (a) => window.TTScoring.displayKey(a.tonic_pc, a.mode), answer,
+  );
+
+  // Several wrong guesses in a row. Each one must be accepted, say only
+  // "Incorrect", and leave CHECK live for the next attempt.
+  const pcs = wrongPcs(answer, 4);
+  for (let i = 0; i < pcs.length; i += 1) {
+    await page.click(`.key[data-pc="${pcs[i]}"]`);
+    await expect(page.locator("#btn-check")).toBeEnabled();
+    await page.click("#btn-check");
+    await page.waitForFunction(
+      (n) => window.__tt.getState().guessesThisPuzzle === n, i + 1,
+    );
+
+    await expect(page.locator("#result-badge")).toHaveText("INCORRECT");
+    await expect(page.locator("#result-key")).toHaveText("—");
+
+    // The assertion this whole test exists for, made after EVERY wrong guess.
+    const body = await page.evaluate(() => document.body.innerText);
+    expect(body).not.toContain(answerText);
+    expect(body).not.toMatch(KEY_NAME_IN_TEXT);
+    const html = await page.content();
+    expect(html).not.toContain(answerText);
+
+    // No warmer/colder: the taxonomy must not surface as text or as a hint on
+    // the keyboard.
+    const resultText = await page.locator("#result-text").innerText();
+    for (const bucket of ["relative", "parallel", "semitone", "fifth"]) {
+      expect(resultText.toLowerCase()).not.toContain(bucket);
+    }
+    const keyHints = await page.$$eval(".key", (keys) =>
+      keys.map((k) => k.dataset.state).filter((s) => !["idle", "committed", "auditioning"].includes(s)));
+    expect(keyHints).toEqual([]);
+
+    // Still unresolved, so the puzzle is still playable.
+    const st = await page.evaluate(() => window.__tt.getState());
+    expect(st.resolved).toBe(false);
+    expect(st.solved).toBe(false);
+  }
+
+  // Classified silently: the buckets moved even though nothing was displayed.
+  const stats = await page.evaluate(() => window.__tt.getState().stats);
+  expect(stats.guesses).toBe(pcs.length);
+  expect(stats.songs).toBe(1);
+  expect(stats.solved).toBe(0);
+  expect(Object.values(stats.buckets).reduce((a, b) => a + b, 0)).toBe(pcs.length);
+  expect(stats.buckets.exact || 0).toBe(0);
+});
+
+test("a correct guess reveals the key and counts as solved", async ({ page }) => {
+  const answer = await answerFor(page);
+  if (answer.mode === "minor") await page.click("#btn-minor");
+  await page.click(`.key[data-pc="${answer.tonic_pc}"]`);
+  await page.click("#btn-check");
+  await page.waitForFunction(() => window.__tt.getState().solved === true);
+
+  await expect(page.locator("#result-badge")).toHaveText("CORRECT");
+  await expect(page.locator("#result-key")).not.toHaveText("—");
   expect(await page.evaluate(() => document.body.innerText)).toMatch(KEY_NAME_IN_TEXT);
+
+  const stats = await page.evaluate(() => window.__tt.getState().stats);
+  expect(stats.solved).toBe(1);
+  expect(stats.songs).toBe(1);
+  await expect(page.locator("#btn-check")).toBeDisabled();
+});
+
+test("REVEAL is available without guessing first", async ({ page }) => {
+  // No key touched, no guess made. Giving up before guessing is allowed, and
+  // the control must not be dead until the player interacts with the keyboard.
+  await expect(page.locator("#btn-reveal")).toBeEnabled();
+  await page.click("#btn-reveal");
+  await page.waitForFunction(() => window.__tt.getState().revealed === true);
+  await expect(page.locator("#result-key")).not.toHaveText("—");
+
+  const stats = await page.evaluate(() => window.__tt.getState().stats);
+  expect(stats.songs).toBe(1);
+  expect(stats.guesses).toBe(0);
+  expect(stats.solved).toBe(0);
+});
+
+test("REVEAL is explicit, never automatic, and scores as not solved", async ({ page }) => {
+  const answer = await answerFor(page);
+  const answerText = await page.evaluate(
+    (a) => window.TTScoring.displayKey(a.tonic_pc, a.mode), answer,
+  );
+
+  // One wrong guess, then a long wait: nothing may reveal itself on a timer.
+  await page.click(`.key[data-pc="${wrongPcs(answer, 1)[0]}"]`);
+  await page.click("#btn-check");
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 1);
+  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => document.body.innerText)).not.toContain(answerText);
+  expect(await page.evaluate(() => window.__tt.getState().revealed)).toBe(false);
+
+  // REVEAL is its own control, visually distinct from CHECK and from NEXT.
+  const distinct = await page.evaluate(() => {
+    const style = (id) => {
+      const s = getComputedStyle(document.getElementById(id));
+      return `${s.backgroundColor}|${s.borderColor}|${s.color}`;
+    };
+    return { reveal: style("btn-reveal"), check: style("btn-check"), next: style("btn-next") };
+  });
+  expect(distinct.reveal).not.toBe(distinct.check);
+  expect(distinct.reveal).not.toBe(distinct.next);
+
+  await page.click("#btn-reveal");
+  await page.waitForFunction(() => window.__tt.getState().revealed === true);
+
+  await expect(page.locator("#result-badge")).toHaveText("REVEALED");
+  await expect(page.locator("#result-key")).toHaveText(answerText);
+  // The relative_error reading is delivered here and nowhere earlier.
+  await expect(page.locator("#result-text")).not.toHaveText("");
+  const attribution = await page.locator("#attribution").innerText();
+  expect(attribution).toContain(await page.locator("#track-artist").innerText());
+
+  const stats = await page.evaluate(() => window.__tt.getState().stats);
+  expect(stats.revealed).toBe(1);
+  expect(stats.solved).toBe(0);
+  expect(stats.songs).toBe(1);
+  await expect(page.locator("#btn-check")).toBeDisabled();
+});
+
+test("attempts per song are tracked across puzzles", async ({ page }) => {
+  const answer = await answerFor(page);
+  for (const pc of wrongPcs(answer, 3)) {
+    await page.click(`.key[data-pc="${pc}"]`);
+    await page.click("#btn-check");
+  }
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 3);
+  await page.click("#btn-reveal");
+  await page.waitForFunction(() => window.__tt.getState().revealed === true);
+
+  await page.click("#btn-next");
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 0);
+  const next = await answerFor(page);
+  await page.click(`.key[data-pc="${wrongPcs(next, 1)[0]}"]`);
+  await page.click("#btn-check");
+  await page.waitForFunction(() => window.__tt.getState().stats.guesses === 4);
+
+  const stats = await page.evaluate(() => window.__tt.getState().stats);
+  expect(stats.songs).toBe(2);
+  expect(stats.guesses).toBe(4);
+  await expect(page.locator("#stats-grid")).toContainText("GUESSES / SONG");
+  await expect(page.locator("#stats-grid")).toContainText("2.0");
 });
 
 test("session stats are ephemeral: no storage, and a reload resets them", async ({ page }) => {
-  await page.click('.key[data-pc="9"]');
+  const answer = await answerFor(page);
+  await page.click(`.key[data-pc="${wrongPcs(answer, 1)[0]}"]`);
   await page.click("#btn-check");
-  await page.waitForFunction(() => window.__tt.getState().stats.attempts === 1);
+  await page.waitForFunction(() => window.__tt.getState().stats.guesses === 1);
 
   const storage = await page.evaluate(() => ({
     local: window.localStorage.length,
@@ -168,8 +359,9 @@ test("session stats are ephemeral: no storage, and a reload resets them", async 
 
   await loadUnit(page);
   const stats = await page.evaluate(() => window.__tt.getState().stats);
-  expect(stats.attempts).toBe(0);
-  expect(stats.correct).toBe(0);
+  expect(stats.guesses).toBe(0);
+  expect(stats.songs).toBe(0);
+  expect(stats.solved).toBe(0);
 });
 
 test("returning to the tab resumes a suspended context", async ({ page }) => {

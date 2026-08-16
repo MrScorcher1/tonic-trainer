@@ -2,9 +2,12 @@
  *
  * WHY BATCHING IS NOT AN OPTIMISATION. Cloudflare's KV free tier allows 100,000
  * reads but only 1,000 WRITES per day — writes are 100x scarcer. One write per
- * vote would cap the whole app at 1,000 ratings a day and then fail hard. At ~10
- * votes per write that becomes ~10,000 ratings a day. Per-vote writes are a
- * design failure here, not an inefficiency.
+ * vote would cap the whole app at 1,000 ratings a day and then fail hard.
+ * Batching ~10 votes per request lifts that to ~830 ratings a day — NOT the
+ * ~10,000 this comment used to claim. A 10-vote POST costs 12 writes, not 1:
+ * the aggregate, the per-IP rate-limit counter, and one per-song-per-IP-per-day
+ * cap key per vote. Per-vote writes are still a design failure here, but the
+ * headroom batching buys is 12x smaller than advertised — see worker/README.md.
  *
  * WHY THE EXIT FLUSH USES visibilitychange/pagehide AND NEVER beforeunload.
  * iOS Safari frequently never fires the unload events — it suspends the tab

@@ -183,9 +183,12 @@ html, body {
   color: #8fc25c;
 }
 
+/* Sits below the session box now. It is licence text, not chrome: no toggle, no
+   truncation, no scroll container — it has to be readable as it stands. */
 .attribution {
   margin: 0;
-  padding: 0 4px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--etch);
   font-size: 0.68rem;
   line-height: 1.5;
   color: var(--text-dim);
@@ -259,6 +262,23 @@ html, body {
   min-height: 54px;
   font-size: 0.95rem;
 }
+/* REVEAL is deliberately a third visual class, not a variant of either
+   neighbour: filled green CHECK is the action you want, dim ghost NEXT is the
+   cheap one, and this is the consequential one that ends the puzzle unsolved.
+   Amber and outlined — unmistakable at a glance, never mistaken for a press of
+   CHECK. */
+.btn--reveal {
+  background: linear-gradient(180deg, rgba(255,170,60,0.14) 0%, rgba(120,74,14,0.20) 100%);
+  border: 1px solid #b9832f;
+  color: #ffce8a;
+  flex: 0 1 120px;
+  min-height: 54px;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+}
+.btn--reveal:active:not(:disabled) { transform: translateY(1px); }
+.btn--reveal:disabled { opacity: 0.45; }
+
 .btn--ghost {
   background: transparent;
   border: 1px solid var(--etch);

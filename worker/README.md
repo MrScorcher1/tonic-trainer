@@ -56,10 +56,28 @@ the difficulty shown is purely the computed prior.
 **KV free tier: 100,000 reads/day but only 1,000 WRITES/day.** Writes are 100×
 scarcer, which is why the client batches ~10 votes per request and why
 everything lives under a single aggregate key (`aggregate:v1`) rather than one
-key per song. Per-song keys would be 3,321 reads per page load; one key is one
+key per song. Per-song keys would be 3,094 reads per page load; one key is one
 read per session and one read-modify-write per flush. **Per-vote writes are a
 design failure here, not an inefficiency** — they would cap the app at 1,000
 ratings a day and then fail hard.
+
+**A 10-vote batch costs 12 writes, not 1 — so the ceiling is ~830 votes/day.**
+Batching does not reduce the write count to one per request, because two other
+writes are per-something-else:
+
+| write | how many per 10-vote POST |
+|---|---|
+| per-IP rate-limit counter (`index.js`, the 20/min guard) | 1 |
+| per-song-per-IP-per-day cap, one key per accepted vote | 10 |
+| the aggregate read-modify-write | 1 |
+| **total** | **12** |
+
+1,000 writes ÷ 12 per batch × 10 votes ≈ **833 ratings a day**, and the two
+abuse guards are 11 of every 12 writes. An earlier version of this file claimed
+batching bought ~10,000 ratings a day; that counted only the aggregate write and
+was wrong by 12×. If the real ceiling ever binds, the fix is to make the guards
+cheaper (in-memory or shorter-lived counters), not to batch harder — batching
+larger only helps the one write in twelve that is actually per-request.
 
 **Concurrent flushes are last-write-wins and can drop votes.** Accepted at this
 scale; a queue or Durable Object is not worth the moving part. This is *not*

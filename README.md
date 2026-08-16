@@ -71,7 +71,18 @@ The keyboard shows three distinct states — **idle**, **auditioning** (sounding
 right now), **committed** (armed for CHECK) — so exploring never turns into an
 accidental submission.
 
-The result panel names the *kind* of miss:
+**Guesses are unlimited, and a wrong one tells you nothing but "Incorrect."** No
+key, no warmer/colder, no hint on the keyboard. That is deliberate: with
+unlimited attempts, any feedback richer than right/wrong is a ladder you can
+climb to the answer in two or three tries without ever hearing it, which is the
+one skill this app exists to build.
+
+**REVEAL** is the way out, and it is always an explicit press — nothing reveals
+itself on a timer or after N misses. It shows the key, the attribution, and the
+diagnosis of your last guess, and the puzzle is scored as **not solved**.
+
+The diagnosis names the *kind* of miss. It is withheld while you are still
+guessing and delivered when the puzzle resolves — by solving it, or by REVEAL:
 
 | verdict | what it means |
 |---|---|
@@ -79,6 +90,10 @@ The result panel names the *kind* of miss:
 | `parallel` | right tonic, wrong colour (C major vs C minor). |
 | `semitone` | your drone was a hair sharp or flat. |
 | `fifth` | you locked onto the dominant instead of the tonic. |
+
+Every wrong guess is still classified into these buckets behind the scenes, so
+the session stats show the shape of your misses (and your guesses-per-song) even
+though no individual miss was ever labelled on screen.
 
 ## Stateless by construction
 

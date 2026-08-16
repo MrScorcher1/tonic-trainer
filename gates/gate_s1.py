@@ -11,7 +11,7 @@
     the S-phase equivalent of Gate 4b's join check: a mis-keyed split would score
     every guess wrong, silently.
   * salting works: two puzzles sharing a key have DIFFERENT hashes. Equal hashes
-    mean the id was left out of the hash input, which collapses all 3,322 files
+    mean the id was left out of the hash input, which collapses all 3,094 files
     into a 24-entry lookup table for the whole corpus.
 """
 
@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tonic_trainer.manifest import load_manifest  # noqa: E402
+from tonic_trainer.manifest import load_manifest, published_entries  # noqa: E402
 from tonic_trainer.static_build import (  # noqa: E402
     ANSWER_FIELDS,
     ANSWERS_DIR,
@@ -74,12 +74,29 @@ def main() -> int:
         print(f"GATE S1 FAILED: {STATIC_MANIFEST} missing — run static_build first")
         return 1
 
-    source = load_manifest()   # the whole corpus ships; filters are applied in the page
+    # The PUBLISHED pool, not the raw manifest. Checking against the manifest is
+    # what let the site ship 227 puzzles whose audio was never uploaded: the
+    # count matched perfectly and every one of them 404ed on selection.
+    source = published_entries()
     raw = STATIC_MANIFEST.read_text()
     public = json.loads(raw)
 
-    check("manifest entry count equals the served pool", len(public) == len(source),
+    check("manifest entry count equals the published pool", len(public) == len(source),
           f"{len(public)} vs {len(source)}")
+
+    # The check that would have caught the 404s. Count equality does not imply
+    # set equality, and it is the audio_path that has to exist on the CDN.
+    publishable = {e["audio_path"] for e in source}
+    orphans = [e["audio_path"] for e in public if e["audio_path"] not in publishable]
+    check("every site-manifest audio_path is in the published set", not orphans,
+          f"{len(orphans)} would 404, first: {orphans[:5]}")
+
+    published_ids = {e["id"] for e in source}
+    unserved = [e["id"] for e in source if e["id"] not in {p["id"] for p in public}]
+    check("every published clip is reachable from the site manifest", not unserved,
+          f"{len(unserved)}: {unserved[:5]}")
+    check("no site-manifest id is absent from the published pool",
+          all(e["id"] in published_ids for e in public))
 
     leaked = [f for f in ANSWER_FIELDS if f in raw]
     check("manifest raw JSON contains no answer field", not leaked, str(leaked))

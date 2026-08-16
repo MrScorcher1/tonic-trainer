@@ -65,6 +65,7 @@
     major: el("btn-major"),
     minor: el("btn-minor"),
     check: el("btn-check"),
+    reveal: el("btn-reveal"),
     next: el("btn-next"),
     result: el("result"),
     resultBadge: el("result-badge"),
@@ -88,11 +89,27 @@
     committedPc: null,
     auditioningPc: null,
     mode: "major",
-    answered: false,
+    // A puzzle is RESOLVED when the player got it right or pressed REVEAL.
+    // Guessing wrong resolves nothing — that is the whole point of unlimited
+    // guesses — so these are three states, not one `answered` boolean.
+    solved: false,
+    revealed: false,
+    guessesThisPuzzle: 0,
+    answer: null,          // recovered once per puzzle, never rendered unresolved
     rated: false,          // rated or explicitly skipped for THIS puzzle
     lastGuess: null,
-    stats: { attempts: 0, correct: 0, buckets: {} },
+    lastBucket: null,      // held back from the DOM until solved or revealed
+    stats: {
+      songs: 0,            // puzzles with at least one guess or a reveal
+      solved: 0,
+      revealed: 0,
+      guesses: 0,          // every guess, not one per song
+      buckets: {},         // wrong-guess taxonomy, accumulated silently
+    },
   };
+
+  /** Solved or revealed — the only two states in which the key may be shown. */
+  const isResolved = () => state.solved || state.revealed;
 
   const audio = {
     ctx: null,
@@ -291,15 +308,23 @@
     });
     dom.armed.textContent =
       state.committedPc === null ? "—" : `${NOTE_NAMES[state.committedPc]} ${state.mode.toUpperCase()}`;
-    dom.check.disabled = state.committedPc === null || state.answered;
+    // Guesses are unlimited: only solving or revealing takes CHECK away.
+    dom.check.disabled = state.committedPc === null || isResolved();
+    dom.reveal.disabled = !state.puzzle || isResolved();
   }
 
   function renderStats() {
-    const { attempts, correct, buckets } = state.stats;
-    const pct = attempts ? Math.round((correct / attempts) * 100) : 0;
+    const { songs, solved, guesses, buckets } = state.stats;
+    // Accuracy is per SONG, not per guess. With unlimited guesses a per-guess
+    // rate would reward giving up early and punish the player who keeps
+    // listening until they hear it, which is exactly the behaviour to reward.
+    const pct = songs ? Math.round((solved / songs) * 100) : 0;
+    const perSong = songs ? (guesses / songs).toFixed(1) : "0.0";
     const cells = [
-      ["ATTEMPTS", attempts],
+      ["SONGS", songs],
+      ["SOLVED", solved],
       ["ACCURACY", `${pct}%`],
+      ["GUESSES / SONG", perSong],
       ["RELATIVE", buckets.relative || 0],
       ["PARALLEL", buckets.parallel || 0],
       ["SEMITONE", buckets.semitone || 0],
@@ -398,10 +423,17 @@
     state.clipBytes = null;
     state.committedPc = null;
     state.auditioningPc = null;
-    state.answered = false;
+    state.solved = false;
+    state.revealed = false;
+    state.guessesThisPuzzle = 0;
+    state.answer = null;
     state.rated = false;
     state.lastGuess = null;
+    state.lastBucket = null;
     dom.result.hidden = true;
+    dom.rateRow.hidden = true;
+    dom.resultKey.textContent = "—";
+    dom.resultText.textContent = "";
     dom.check.disabled = true;
     dom.flag.disabled = false;
     dom.flag.textContent = "FLAG THIS ANSWER";
@@ -430,6 +462,10 @@
     // anchoring note on the rating control.
     dom.genreReadout.textContent = String(puzzle.genre || "").toUpperCase();
     renderDifficulty();   // shown from the start, per the user's call
+    // Again, now that state.puzzle exists: the earlier call ran before the
+    // puzzle was picked, which left REVEAL disabled until the player happened
+    // to touch a key. Revealing without guessing at all is legitimate.
+    renderKeys();
     setStatus("PRESS PLAY TO START");
 
     const url = audioUrl(puzzle);
@@ -478,41 +514,124 @@
    * puzzle selection. That is what makes "peeking requires intent" true rather
    * than merely claimed: until you commit, no request for the answer exists.
    */
-  async function submitGuess() {
-    if (state.committedPc === null || !state.puzzle || state.answered) return;
-    const guess = { id: state.puzzle.id, tonic_pc: state.committedPc, mode: state.mode };
-
-    let verifier;
+  /**
+   * Fetch this puzzle's verifier and brute-force the answer out of it.
+   *
+   * Deliberately called on every guess rather than cached: the fetch is what
+   * makes "peeking requires intent" true, and one request per guess keeps that
+   * property under unlimited guesses. Returns null after reporting the error.
+   */
+  async function resolveAnswer() {
+    // Cached for the CURRENT puzzle only, and cleared by loadPuzzle. The
+    // property that matters is unchanged — no request for an answer exists
+    // until the player commits — but under unlimited guesses the uncached
+    // version re-fetched and re-brute-forced 24 SHA-256 digests on every single
+    // guess, which is slow enough to feel on a phone.
+    if (state.answer) return state.answer;
     try {
       const resp = await fetch(`answers/${state.puzzle.id}.json`);
       if (!resp.ok) throw new Error(`answers/${state.puzzle.id}.json returned ${resp.status}`);
-      verifier = (await resp.json()).h;
+      const verifier = (await resp.json()).h;
+      state.answer = await window.TTScoring.recoverAnswer(state.puzzle.id, verifier);
+      return state.answer;
     } catch (err) {
       showError("COULD NOT LOAD THE ANSWER FOR THIS PUZZLE.", err.message);
-      return;
+      return null;
     }
+  }
 
-    const answer = await window.TTScoring.recoverAnswer(state.puzzle.id, verifier);
+  /** Put the key, the attribution and the miss taxonomy on screen. Only ever
+   *  called from a correct guess or from REVEAL. */
+  function showAnswer(answer, { solved }) {
+    const keyDisplay = window.TTScoring.displayKey(answer.tonic_pc, answer.mode);
+    dom.result.hidden = false;
+    // Rating and flagging both judge the answer, so neither is offered before
+    // the player has seen it.
+    dom.rateRow.hidden = false;
+    dom.resultBadge.textContent = solved ? "CORRECT" : "REVEALED";
+    dom.resultBadge.dataset.ok = String(solved);
+    dom.resultKey.textContent = keyDisplay;
+
+    if (solved) {
+      dom.resultText.textContent = window.TTScoring.explain("exact", keyDisplay, keyDisplay);
+    } else if (state.lastGuess) {
+      // The relative_error reading is withheld while guessing and delivered
+      // here, against the player's LAST guess — the diagnostic they came for,
+      // paid for by giving up the puzzle rather than handed over mid-attempt.
+      const guessDisplay = window.TTScoring.displayKey(
+        state.lastGuess.tonic_pc, state.lastGuess.mode,
+      );
+      dom.resultText.textContent =
+        window.TTScoring.explain(state.lastBucket, keyDisplay, guessDisplay);
+    } else {
+      dom.resultText.textContent = `The key is ${keyDisplay}. You did not guess this one.`;
+    }
+    setStatus(solved ? "LOCKED IT" : "REVEALED — NOT COUNTED AS SOLVED");
+  }
+
+  /**
+   * Score the guess entirely in the browser.
+   *
+   * The answer file is fetched HERE and nowhere else — not on load, not on
+   * puzzle selection. That is what makes "peeking requires intent" true rather
+   * than merely claimed: until you commit, no request for the answer exists.
+   *
+   * A WRONG GUESS SAYS ONLY "INCORRECT". No key, no bucket name, no warmer or
+   * colder, no hint at the keyboard. The classification still happens and still
+   * lands in the session stats — the relative-minor diagnostic is the point of
+   * this app and must survive — it just does not reach the DOM, because a
+   * player with unlimited guesses could otherwise walk the taxonomy backwards to
+   * the answer in two or three tries.
+   */
+  async function submitGuess() {
+    if (state.committedPc === null || !state.puzzle || isResolved()) return;
+    const guess = { id: state.puzzle.id, tonic_pc: state.committedPc, mode: state.mode };
+
+    const answer = await resolveAnswer();
+    if (!answer) return;
+
     const bucket = window.TTScoring.classify(
       guess.tonic_pc, guess.mode, answer.tonic_pc, answer.mode,
     );
-    const keyDisplay = window.TTScoring.displayKey(answer.tonic_pc, answer.mode);
-    const guessDisplay = window.TTScoring.displayKey(guess.tonic_pc, guess.mode);
 
-    state.answered = true;
+    if (state.guessesThisPuzzle === 0) state.stats.songs += 1;
+    state.guessesThisPuzzle += 1;
+    state.stats.guesses += 1;
     state.lastGuess = guess;
-    state.stats.attempts += 1;
-    if (bucket === "exact") state.stats.correct += 1;
+    state.lastBucket = bucket;
     state.stats.buckets[bucket] = (state.stats.buckets[bucket] || 0) + 1;
-    renderStats();
 
-    dom.result.hidden = false;
-    dom.resultBadge.textContent = bucket === "exact" ? "CORRECT" : bucket.toUpperCase();
-    dom.resultBadge.dataset.ok = String(bucket === "exact");
-    dom.resultKey.textContent = keyDisplay;
-    dom.resultText.textContent = window.TTScoring.explain(bucket, keyDisplay, guessDisplay);
-    dom.check.disabled = true;
-    setStatus(bucket === "exact" ? "LOCKED IT" : "NOT QUITE — TRY THE NEXT ONE");
+    if (bucket === "exact") {
+      state.solved = true;
+      state.stats.solved += 1;
+      showAnswer(answer, { solved: true });
+    } else {
+      // Constant text. It must not vary with the bucket, the interval or the
+      // guess, or it becomes a hint channel.
+      dom.result.hidden = false;
+      dom.resultBadge.textContent = "INCORRECT";
+      dom.resultBadge.dataset.ok = "false";
+      dom.resultKey.textContent = "—";
+      dom.resultText.textContent = "Incorrect. Listen again and guess as often as you like, "
+        + "or press REVEAL to see the key.";
+      setStatus("INCORRECT — GUESS AGAIN OR REVEAL");
+    }
+    renderStats();
+    renderKeys();
+  }
+
+  /** REVEAL — explicit, never automatic, and always scored as not solved. */
+  async function revealAnswer() {
+    if (!state.puzzle || isResolved()) return;
+    const answer = await resolveAnswer();
+    if (!answer) return;
+
+    if (state.guessesThisPuzzle === 0) state.stats.songs += 1;
+    state.revealed = true;
+    state.stats.revealed += 1;
+    showAnswer(answer, { solved: false });
+    renderStats();
+    renderKeys();
   }
 
   /**
@@ -541,14 +660,18 @@
       dot.dataset.filled = String(i <= info.displayed);
       dom.difficultyDots.appendChild(dot);
     }
+    // Display only. `prior`, `n` and `displayed` stay three separate values in
+    // the data — collapsing them would destroy the audit this loop exists for —
+    // but the readout no longer calls the number "computed", which read as a
+    // hedge about a rating the player is being asked to trust.
     dom.difficultyNote.textContent = info.n
-      ? `computed ${info.prior} · ${info.n} player rating${info.n === 1 ? "" : "s"}`
-      : `computed ${info.prior}`;
+      ? `${info.prior} · ${info.n} player rating${info.n === 1 ? "" : "s"}`
+      : `${info.prior}`;
   }
 
   /** Rating is optional and never blocks anything; NEXT works rated or not. */
   function rateCurrent(value) {
-    if (!state.puzzle || !state.answered || state.rated) return;
+    if (!state.puzzle || !isResolved() || state.rated) return;
     window.TTRatings.record(state.puzzle.id, value, { prior: Number(state.puzzle.difficulty) });
     state.rated = true;
     dom.rateRow.querySelectorAll(".btn--rate").forEach((b) => {
@@ -628,6 +751,7 @@
   });
 
   dom.check.addEventListener("click", submitGuess);
+  dom.reveal.addEventListener("click", revealAnswer);
   // Manual advance, deliberately. The result panel persists until the player
   // moves on: they need time to hear what they got wrong, and that pause is
   // where the rating control lives.
@@ -675,7 +799,11 @@
       auditioningPc: state.auditioningPc,
       committedPc: state.committedPc,
       mode: state.mode,
-      answered: state.answered,
+      solved: state.solved,
+      revealed: state.revealed,
+      resolved: isResolved(),
+      guessesThisPuzzle: state.guessesThisPuzzle,
+      lastBucket: state.lastBucket,
       rated: state.rated,
       puzzleId: state.puzzle ? state.puzzle.id : null,
       puzzleGenre: state.puzzle ? state.puzzle.genre : null,

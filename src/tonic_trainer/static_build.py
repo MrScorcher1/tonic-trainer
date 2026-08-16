@@ -6,7 +6,7 @@ verifier file per puzzle.
 (tonic, mode) combinations with that puzzle's id and finds the match, which both
 scores the guess and recovers the key to display.
 
-**The puzzle id in the hash input is load-bearing.** Without it, all 3,322 files
+**The puzzle id in the hash input is load-bearing.** Without it, all 3,094 files
 collapse into a 24-entry lookup table: compute those once and the whole corpus
 is readable. With it, the brute force must be re-run per puzzle. Gate S1 pins
 this by asserting two puzzles sharing a key have different hashes.
@@ -28,7 +28,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .manifest import load_manifest
+from .manifest import published_entries
 from .paths import ROOT
 
 DOCS = ROOT / "docs"
@@ -61,11 +61,13 @@ def public_entry(entry: dict) -> dict:
 
 
 def build() -> dict:
-    # The whole corpus ships; genre and difficulty are filters the player applies
-    # in the page, not build-time pool decisions.
-    entries = load_manifest()
+    # The PUBLISHED corpus ships — the same pool hf_bundle uploads, never the
+    # raw manifest. Genre and difficulty stay player-side filters, but whether a
+    # clip's audio exists on the CDN is a build-time fact, and the site used to
+    # get it wrong for 227 puzzles. See manifest.published_entries.
+    entries = published_entries()
     if not entries:
-        raise ValueError("the manifest is empty — nothing to publish")
+        raise ValueError("the published pool is empty — nothing to publish")
 
     DOCS.mkdir(parents=True, exist_ok=True)
     if ANSWERS_DIR.exists():
@@ -98,8 +100,11 @@ def build() -> dict:
         "ratings_prior_weight": PRIOR_WEIGHT,
         # Cloudflare's KV free tier allows 100,000 reads but only 1,000 WRITES
         # per day. One write per vote would cap the app at 1000 ratings a day
-        # and then fail hard, so votes are batched: ~10 per write turns that cap
-        # into ~10,000 ratings a day.
+        # and then fail hard, so votes are batched. A 10-vote batch is 12 writes,
+        # NOT 1 — the aggregate plus a per-IP rate-limit counter plus one
+        # per-song-per-IP-per-day cap key per vote — so the real ceiling is
+        # ~830 ratings a day, not the ~10,000 this comment used to claim. See
+        # worker/README.md for the table.
         "ratings_batch_size": RATINGS_BATCH_SIZE,
         "note": "Static build. audio_base must stay the resolve/ URL — what it "
                 "redirects to is signed and expires.",

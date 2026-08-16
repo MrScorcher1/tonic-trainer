@@ -60,13 +60,30 @@ async function withRatings(page, { failing = false } = {}) {
   return posts;
 }
 
-async function answerAndRate(page, rating) {
+/** Guesses once, then resolves the puzzle so the rating controls are offered.
+ *  Guesses are unlimited, so a single wrong guess no longer ends a puzzle, and
+ *  rating judges the answer — it is only available once the answer is shown. */
+async function resolve(page) {
   await page.click('.key[data-pc="0"]');
   await page.click("#btn-check");
+  // Wait for the guess to LAND before asking whether it resolved the puzzle.
+  // submitGuess awaits a fetch and a 24-way brute force, so reading `resolved`
+  // straight after the click reads it from before the guess was scored — and
+  // when the guess happened to be right, the branch then clicked a REVEAL that
+  // had already correctly disabled itself.
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 1);
+  if (!(await page.evaluate(() => window.__tt.getState().resolved))) {
+    await page.click("#btn-reveal");
+  }
+  await page.waitForFunction(() => window.__tt.getState().resolved === true);
   await expect(page.locator("#result")).toBeVisible();
+}
+
+async function answerAndRate(page, rating) {
+  await resolve(page);
   if (rating) await page.click(`.btn--rate[data-rating="${rating}"]`);
   await page.click("#btn-next");
-  await page.waitForFunction(() => window.__tt.getState().answered === false);
+  await page.waitForFunction(() => window.__tt.getState().resolved === false);
 }
 
 /* REMOVAL-OK: "the computed difficulty is absent from the DOM until the player
@@ -78,7 +95,7 @@ async function answerAndRate(page, rating) {
  * disappearing. What the retirement costs is narrowed in the README: ratings are
  * now anchored, so only DISAGREEMENT with the prior is evidence.
  */
-test("the computed difficulty is on the readout from the moment a puzzle loads", async ({ page }) => {
+test("the difficulty is on the readout, unqualified, from the moment a puzzle loads", async ({ page }) => {
   await withRatings(page);
   await page.goto("/");
   await page.waitForFunction(() => window.__tt.getState().puzzleId !== null);
@@ -93,7 +110,20 @@ test("the computed difficulty is on the readout from the moment a puzzle loads",
 
   const level = await page.evaluate(() => window.__tt.getState().puzzleDifficulty);
   expect(filled).toBe(level);
-  await expect(page.locator("#difficulty-note")).toContainText(`computed ${level}`);
+
+  // The number is shown, the "computed" qualifier is not — it read as a hedge
+  // about a rating the player is being asked to trust. Display only: prior, n
+  // and displayed are still three separate values underneath.
+  await expect(page.locator("#difficulty-note")).toContainText(String(level));
+  const note = await page.locator("#difficulty-note").innerText();
+  expect(note.toLowerCase()).not.toContain("computed");
+  const priorInData = await page.evaluate(
+    (id) => window.TTRatings.rating(id, window.__tt.getState().puzzleDifficulty),
+    await page.evaluate(() => window.__tt.getState().puzzleId),
+  );
+  expect(priorInData.prior).toBe(level);
+  expect(typeof priorInData.n).toBe("number");
+  expect(typeof priorInData.displayed).toBe("number");
 });
 
 test("rating is optional: the player can advance without ever rating", async ({ page }) => {
@@ -102,14 +132,12 @@ test("rating is optional: the player can advance without ever rating", async ({ 
   await page.waitForFunction(() => window.__tt.getState().puzzleId !== null);
 
   const first = await page.evaluate(() => window.__tt.getState().puzzleId);
-  await page.click('.key[data-pc="0"]');
-  await page.click("#btn-check");
-  await expect(page.locator("#result")).toBeVisible();
+  await resolve(page);
 
   // Straight to the next clip, no rating given.
   await page.click("#btn-next");
   await page.waitForFunction(
-    (prev) => window.__tt.getState().puzzleId !== null && window.__tt.getState().answered === false,
+    (prev) => window.__tt.getState().puzzleId !== null && window.__tt.getState().resolved === false,
     first,
   );
   expect(await page.evaluate(() => window.TTRatings.debug().session.length)).toBe(0);
@@ -129,10 +157,16 @@ test("the app does not auto-advance after a submission", async ({ page }) => {
   await page.waitForTimeout(2000);
   await expect(page.locator("#result")).toBeVisible();
   expect(await page.evaluate(() => window.__tt.getState().puzzleId)).toBe(first);
-  expect(await page.evaluate(() => window.__tt.getState().answered)).toBe(true);
+  // The guess registered and the app stayed put — no auto-advance, and with
+  // unlimited guesses no auto-resolve either.
+  expect(await page.evaluate(() => window.__tt.getState().guessesThisPuzzle)).toBe(1);
 });
 
 test("N ratings produce ceil(N/10) writes, not N", async ({ page }) => {
+  // Drives 12 whole puzzles, and each one now needs a guess AND a REVEAL before
+  // it can be rated. That is real work, not a slow assertion — the emulated
+  // iPhone runs out of the default 45s honestly.
+  test.setTimeout(120_000);
   const posts = await withRatings(page);
   await page.goto("/");
   await page.waitForFunction(() => window.__tt.getState().puzzleId !== null);
@@ -192,6 +226,10 @@ test("a broken ratings endpoint does not break play", async ({ page }) => {
   // Still playing, still scoring, difficulty still shown from the prior.
   await page.click('.key[data-pc="3"]');
   await page.click("#btn-check");
+  await page.waitForFunction(() => window.__tt.getState().guessesThisPuzzle === 1);
+  if (!(await page.evaluate(() => window.__tt.getState().resolved))) {
+    await page.click("#btn-reveal");
+  }
   await expect(page.locator("#result")).toBeVisible();
   await page.click('.btn--rate[data-rating="1"]');
   // The difficulty shown falls back to the algorithmic prior; nothing errors.

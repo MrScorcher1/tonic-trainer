@@ -177,6 +177,39 @@ def attach_difficulty(entries: list[dict], ratings: dict[str, int]) -> list[dict
     return [{**e, "difficulty": int(ratings[e["id"]])} for e in entries]
 
 
+def published_entries() -> list[dict]:
+    """The pool that ships: the manifest minus everything the licence
+    cross-check excludes.
+
+    THE SITE AND THE HUGGING FACE BUNDLE MUST BOTH BUILD FROM THIS. They used
+    to filter separately — the bundle applied the cross-check, the site did not
+    — so the site shipped 227 puzzles whose audio was never published and every
+    one of them 404ed on selection. The bug was invisible from the build's own
+    counts, because each side was internally consistent; only the pair was
+    wrong. One function is what stops them drifting apart again.
+
+    Difficulty is deliberately NOT re-binned over this smaller pool. Doing so
+    moves the tercile cut points by <0.001 and relabels 10 of 3094 clips (0.3%),
+    while making the site disagree with the already-published dataset — a real
+    inconsistency traded for a rounding error. The per-level counts do shift,
+    because 227 clips left; the labels each clip carries do not.
+    """
+    from .crosscheck import CONFLICTS_JSON, conflicted_ids
+
+    if not CONFLICTS_JSON.exists():
+        raise FileNotFoundError(
+            f"{CONFLICTS_JSON} missing — the published pool is defined by the licence "
+            "cross-check, so it cannot be determined without it. It needs the full "
+            "tracks' ID3 tags, so it cannot be run later."
+        )
+    entries = load_manifest()
+    excluded = conflicted_ids(json.loads(CONFLICTS_JSON.read_text()))
+    kept = [e for e in entries if e["id"] not in excluded]
+    if not kept:
+        raise ValueError("the licence cross-check excluded every entry — nothing to publish")
+    return kept
+
+
 def served_pool(entries: Iterable[dict], genres: Iterable[str] | None = None,
                 levels: Iterable[int] | None = None) -> list[dict]:
     """Filter by genre and/or difficulty. The default is the whole corpus.

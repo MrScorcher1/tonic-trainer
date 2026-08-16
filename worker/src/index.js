@@ -8,8 +8,15 @@
  * reads, so:
  *   - the client batches ~10 votes per request (see docs/ratings.js), and
  *   - everything lives under ONE aggregate key, not one key per song. Per-song
- *     keys would mean 3,321 reads per page load; one key is one read per
+ *     keys would mean 3,094 reads per page load; one key is one read per
  *     session and one read-modify-write per flush.
+ *
+ * BUT BATCHING DOES NOT MAKE A REQUEST COST ONE WRITE. A 10-vote POST costs 12:
+ * the aggregate (1), the per-IP rate-limit counter (1), and the
+ * per-song-per-IP-per-day cap (1 per accepted vote, so 10). That puts the real
+ * ceiling at ~830 ratings a day, not the ~10,000 an earlier comment claimed.
+ * Eleven of every twelve writes are the abuse guards, so if the ceiling ever
+ * binds, make the guards cheaper — batching larger barely moves it.
  *
  * ACCEPTED, NOT SOLVED: concurrent flushes are LAST-WRITE-WINS and can drop
  * votes. At this scale that is rare and cheap, and a queue or Durable Object is

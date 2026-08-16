@@ -57,6 +57,37 @@ def static_invariants() -> None:
           and "document.cookie" not in app_js)
     check("AudioContext is constructed in exactly one place", app_js.count("new Ctor()") == 1)
 
+    # The reveal policy, pinned in the source as well as in the browser. The
+    # e2e suite proves the answer stays out of the DOM across several wrong
+    # guesses; these catch the shapes that would break it before a browser runs.
+    check("the key is written to the result panel from exactly one function",
+          app_js.count("dom.resultKey.textContent = keyDisplay") == 1)
+    check("REVEAL exists as its own control", 'el("btn-reveal")' in app_js
+          and "revealAnswer" in app_js)
+    check("REVEAL is bound to a click and nothing else",
+          'dom.reveal.addEventListener("click", revealAnswer)' in app_js
+          and "setTimeout(revealAnswer" not in app_js
+          and "setInterval(revealAnswer" not in app_js)
+    check("no guess limit counts down to a reveal",
+          "MAX_GUESSES" not in app_js and "guessLimit" not in app_js)
+    check("the miss taxonomy is not rendered while unresolved",
+          app_js.count("window.TTScoring.explain(") == 2
+          and "bucket.toUpperCase()" not in app_js)
+
+    check("REVEAL is a distinct button class, not a CHECK or NEXT variant",
+          'id="btn-reveal"' in index and 'class="btn btn--reveal"' in index)
+    style = (ROOT / "docs" / "style.css").read_text()
+    check("the REVEAL class carries its own styling", ".btn--reveal {" in style)
+
+    # Attribution: below the session box, and not hidden behind anything.
+    stats_at = index.find('class="stats"')
+    attribution_at = index.find('id="attribution"')
+    check("the attribution sits below the session box",
+          stats_at != -1 and attribution_at > stats_at,
+          f"stats at {stats_at}, attribution at {attribution_at}")
+    check("the attribution is not behind a toggle",
+          "<details" not in index.lower() and 'id="attribution" hidden' not in index)
+
 
 def main() -> int:
     print("=== GATE 6 — frontend ===")

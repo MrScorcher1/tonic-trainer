@@ -98,7 +98,7 @@ test("brute force recovers the answer a verifier stands for", async ({ page }) =
 
 test("a verifier from a different puzzle id does not resolve", async ({ page }) => {
   // The id is the salt: the same key under another id must not brute-force,
-  // which is what stops all 3321 files collapsing to a 24-entry table.
+  // which is what stops all 3094 files collapsing to a 24-entry table.
   const failed = await page.evaluate(async () => {
     const encoder = new TextEncoder();
     const digest = await crypto.subtle.digest("SHA-256", encoder.encode("fma-000173:7:major"));
