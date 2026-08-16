@@ -21,6 +21,22 @@ The full build downloads ~39 GB of audio from Zenodo and derives ~3,600 clips.
 Expect a couple of hours on a normal connection; every step is resumable and
 idempotent, so re-running picks up where it stopped.
 
+### Where the audio comes from
+
+By default the server reads clips from `build/clips/`. Two other modes exist for
+hosting the audio elsewhere (e.g. a Hugging Face dataset):
+
+```bash
+TT_AUDIO_BASE="https://.../clips" python -m tonic_trainer.server   # browser fetches directly
+python -m tonic_trainer.server --audio-base "https://.../clips" --audio-proxy
+```
+
+Prefer `--audio-proxy` unless you have checked that the host sends
+`Access-Control-Allow-Origin`: `decodeAudioData` must read the response body, and
+a cross-origin fetch without that header is refused. Proxy mode fetches each clip
+server-side, caches it, and serves it same-origin with Range/206 intact, so the
+host's CORS policy stops mattering.
+
 ### Serving to a phone
 
 ```bash
@@ -79,6 +95,7 @@ not start until phase N's gate passes. `gates/run_all.py` enforces the order.
 | 4b | the labels actually describe the audio — Krumhansl-Schmuckler agreement with a shuffled-label negative control |
 | 5 | the server never leaks an answer, honours Range requests, and holds no per-user state |
 | 6 | the front panel's audio invariants and layout hold on headless WebKit at desktop and iPhone viewports |
+| 7 | the publication bundle carries per-file licences and attribution, strips the answers, and no code path can push |
 
 **Gate 4b is the one that catches the failure nothing else would**: correct
 audio, correct labels, joined on the wrong key. It passes only if agreement is
@@ -106,23 +123,44 @@ the clip regardless of how the compilation is licensed:
   is token-based, because a bare "ND" substring match would also exclude
   *Netherlands*, *England*, *Finland*, *Switzerland* and *Sound Recording*.
 * **Unrecognized or missing license fields are excluded**, never assumed.
+* **The mp3's own ID3 tags get a vote.** 276 tracks carry a `WCOP`/`TCOP` tag
+  claiming BY-NC-ND while `tracks.csv` says otherwise. Those are dropped from the
+  served corpus, not merely from publication — slicing a loop from a file that
+  claims NoDerivatives is the derivative work the licence forbids, whoever is
+  serving it. The other 227 conflicts are NC-vs-not disagreements, which only
+  bite on redistribution, so they play locally and stay out of any upload.
 * **NonCommercial is allowed and flagged** — it only bites on monetization.
 * **Attribution is mandatory.** A track without a title and artist never becomes
   a puzzle, and the attribution line is always on screen.
 
-### One correction to the original spec
+### Corrections to the original spec
 
-The spec assumed the Zenodo FMAK package shipped 30-second clips "cut from the
-middle of each track". It does not — it ships **full-length** audio (median
-7.6 MB, ~210 s). So the 30-second loop is derived here instead: `clips.py` cuts
-it from the middle of each track with ffmpeg and re-encodes to mono 128 kbps,
-which keeps the documented "no song openings" limitation intact, keeps the
-25–35 s gate honest, and drops the per-puzzle transfer from ~7 MB to ~0.5 MB.
+**The FMAK package is not 30-second clips.** The spec assumed it shipped clips
+"cut from the middle of each track". It ships **full-length** audio (median
+7.6 MB, ~210 s). The 30-second loop is derived here instead: `clips.py` cuts it
+with ffmpeg and re-encodes to mono 128 kbps, which keeps the 25–35 s gate honest
+and drops the per-puzzle transfer from ~7 MB to ~0.5 MB.
+
+**Clips are openings, not middles.** With full tracks in hand, the spec's "you
+never hear a song opening" entry stopped being an inherent limitation and became
+a choice — and openings are where a tonic is established, which is the skill
+being trained. Measured on the same 300 tracks, openings also beat middles for
+tonal clarity: 49.3% vs 44.3% estimator agreement. The cost is that leading
+silence becomes possible, so every clip is checked with `volumedetect` and
+anything under −55 dBFS is dropped (one clip in 3,610 was digital silence).
+
+**Krumhansl-Schmuckler's characteristic failure is the fifth, not the relative.**
+Gate 4b originally required `relative` to be the largest error bucket. It never
+is: `fifth` dominated in all five variants tested (both clip positions, three
+chroma front-ends), and MIREX's own scoring rates a fifth error as the *closest*
+near-miss (correct 1.0, fifth 0.5, relative 0.3, parallel 0.2). The criterion was
+amended to accept either, with the evidence recorded in `gates/gate4b.py`. No
+numeric threshold was changed.
 
 ## Known limitations
 
-* Clips come from track middles, so you never hear a song opening — where tonics
-  are most clearly established.
+* Clips are the opening 30 seconds, so you hear whatever the track starts with —
+  sometimes an intro rather than the material that establishes the key.
 * `fma_keys` is a lightly-reviewed, single-annotator set. Labels are human-made
   but not cross-checked, hence the FLAG button: a dispute is auto-triaged by
   re-running the estimator on that one track and escalated only when the
