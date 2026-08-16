@@ -84,6 +84,38 @@ def fetch_upstream(rel_path: str, audio_base: str) -> Path:
     return target
 
 
+def check_remote_audio(audio_base: str, sample_path: str, *, timeout: int = 20) -> dict:
+    """Ask the remote host, at boot, whether a browser will be allowed to read it.
+
+    Direct fetch depends on the response that carries the BYTES sending
+    `Access-Control-Allow-Origin` — not the 302 that points at it. So this
+    follows the redirect chain and reports the header on the final hop.
+
+    Measured 2026-08-16 on Hugging Face: hop 1 (huggingface.co) reflects the
+    request origin, hop 2 (the CDN, carrying the bytes) sends `*`, which is
+    origin-independent and therefore works from LAN addresses too. That can
+    change without notice, hence this check: a silent runtime breakage becomes a
+    startup message.
+    """
+    import requests
+
+    url = f"{audio_base}/{sample_path}"
+    result: dict = {"url": url, "ok": False, "acao": None, "status": None, "error": None}
+    try:
+        resp = requests.get(url, headers={"Origin": "http://localhost"}, stream=True,
+                            allow_redirects=True, timeout=timeout)
+        resp.close()
+    except requests.RequestException as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    result["status"] = resp.status_code
+    result["acao"] = resp.headers.get("access-control-allow-origin")
+    result["final_url"] = resp.url
+    result["ok"] = resp.status_code == 200 and bool(result["acao"])
+    return result
+
+
 class Guess(BaseModel):
     id: str = Field(min_length=1)
     tonic_pc: int = Field(ge=0, le=11)
@@ -100,6 +132,15 @@ def _puzzle_payload(entry: dict, prefix: str, audio_base: str = "") -> dict:
     as a Hugging Face dataset. Unset — the default — serves the clip from this
     process, which always works; turning the remote on or off is one env var,
     not a rebuild.
+
+    **Always emit the `resolve/` URL, never the URL it redirects to.** Hugging
+    Face answers `resolve/` with a 302 to a CDN URL that is *signed* — it carries
+    an `Expires` timestamp plus a Policy/Signature pair. Caching or persisting
+    that resolved URL anywhere (here, in the manifest, in the page, in a
+    "helpful" pre-resolution step) works perfectly until the signature expires
+    and then breaks playback for everyone. The redirect must be followed fresh
+    on every request. This is precisely the kind of thing a later optimisation
+    would break, so it is written down at the point where the URL is built.
     """
     return {
         "id": entry["id"],
@@ -369,6 +410,25 @@ def main(argv: list[str] | None = None) -> int:
     if app.state.audio_base:
         mode = "proxied server-side" if app.state.audio_proxy else "fetched by the browser"
         print(f"audio: {app.state.audio_base} ({mode})")
+        if not app.state.audio_proxy:
+            # Direct fetch is the only mode whose viability depends on someone
+            # else's headers, so it is the only one worth probing at boot.
+            from .manifest import load_manifest
+
+            sample = load_manifest()[0]["audio_path"]
+            verdict = check_remote_audio(app.state.audio_base, sample)
+            if verdict["ok"]:
+                print(f"  CORS check OK — final hop {verdict['final_url'][:70]}... "
+                      f"sends Access-Control-Allow-Origin: {verdict['acao']}")
+                if verdict["acao"] != "*":
+                    print("  NOTE: that is a reflected origin, not a wildcard. It may behave")
+                    print("        differently from a LAN address than from localhost.")
+            else:
+                reason = verdict["error"] or (
+                    f"HTTP {verdict['status']}, Access-Control-Allow-Origin: {verdict['acao']!r}")
+                print(f"  WARNING: the remote host may not be browser-readable — {reason}")
+                print("  Clips will fail to decode in the page. Re-run with --audio-proxy to")
+                print("  fetch them server-side and serve them same-origin instead.")
 
     if args.tunnel:
         print("starting cloudflared quick tunnel ...")

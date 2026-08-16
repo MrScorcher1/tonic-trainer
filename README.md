@@ -31,11 +31,22 @@ TT_AUDIO_BASE="https://.../clips" python -m tonic_trainer.server   # browser fet
 python -m tonic_trainer.server --audio-base "https://.../clips" --audio-proxy
 ```
 
-Prefer `--audio-proxy` unless you have checked that the host sends
-`Access-Control-Allow-Origin`: `decodeAudioData` must read the response body, and
-a cross-origin fetch without that header is refused. Proxy mode fetches each clip
-server-side, caches it, and serves it same-origin with Range/206 intact, so the
-host's CORS policy stops mattering.
+Direct fetch works with the published dataset: measured 2026-08-16, the
+`resolve/` URL 302s to the CDN and *that* response — the one carrying the bytes —
+sends `Access-Control-Allow-Origin: *`, which is origin-independent and so works
+from a LAN address as well as localhost. The server re-checks this at startup and
+prints a warning naming `--audio-proxy` if the header ever disappears, so a
+change at the host's end shows up as a boot message rather than silent playback
+failure.
+
+`--audio-proxy` remains the robust fallback: it fetches each clip server-side,
+caches it, and serves it same-origin with Range/206 intact, so the host's CORS
+policy stops mattering.
+
+**Never cache the resolved CDN URL.** `resolve/` redirects to a *signed* URL with
+an `Expires` timestamp and a Policy/Signature pair. Always request the `resolve/`
+URL and let it redirect fresh; storing the resolved one works until the signature
+expires and then breaks playback for everyone.
 
 ### Serving to a phone
 
